@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udp-director-config
+data:
+  config.yaml: |
+    # Port for the Phase 1 TCP Query Server
+    queryPort: 9000
+
+    # Port for the Phase 2 TCP/UDP Data Proxy
+    dataPort: 7777
+
+    # How long a token is valid for lookup (in seconds)
+    tokenTtlSeconds: 30
+
+    # How long a data proxy session can be inactive before being torn down (in seconds)
+    sessionTimeoutSeconds: 300
+
+    # Magic byte sequence (as a hex string) that prefixes a "Control Packet"
+    # This example is 4 bytes (0xFFFFFFFF) + "RESET" (0x5245534554)
+    controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+    # Default endpoint query to use if no token is provided
+    # Uses the same query structure as client queries for consistency
+    defaultEndpoint:
+      resourceType: "gameserver"
+      namespace: "default"
+      labelSelector:
+        agones.dev/fleet: "m-tutorial"
+      statusQuery:
+        jsonPath: "status.state"
+        expectedValue: "Ready"
+
+    # Resource type definitions for client queries
+    resourceQueryMapping:
+      gameserver:
+        group: "agones.dev"
+        version: "v1"
+        resource: "gameservers"
+        addressPath: "status.address"
+        portName: "default"

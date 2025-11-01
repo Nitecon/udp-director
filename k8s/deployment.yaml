@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udp-director
+  labels:
+    app: udp-director
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udp-director
+  template:
+    metadata:
+      labels:
+        app: udp-director
+    spec:
+      serviceAccountName: udp-director
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: udp-director
+          image: registry.nitecon.net/udp-director:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+          ports:
+            - name: query
+              containerPort: 9000
+              protocol: TCP
+            - name: data
+              containerPort: 7777
+              protocol: UDP
+          env:
+            - name: CONFIG_PATH
+              value: "/etc/udp-director/config.yaml"
+            - name: RUST_LOG
+              value: "udp_director=info"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/udp-director
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: udp-director-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udp-director
+  labels:
+    app: udp-director
+spec:
+  type: LoadBalancer
+  selector:
+    app: udp-director
+  ports:
+    - name: query
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: data
+      port: 7777
+      targetPort: 7777
+      protocol: UDP

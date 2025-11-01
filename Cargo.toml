@@ -1,0 +1,74 @@
+[package]
+name = "udp-director"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# Kubernetes client
+kube = { version = "2.0.1", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.26", features = ["latest"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Caching with TTL
+moka = { version = "0.12", features = ["future"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID generation for tokens
+uuid = { version = "1.11", features = ["v4", "fast-rng"] }
+
+# Hex encoding/decoding for magic bytes
+hex = "0.4"
+
+# Async utilities
+futures = "0.3"
+
+# JSONPath for status queries
+jsonpath-rust = "1.0.4"
+
+# Concurrent data structures
+dashmap = "6.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[example]]
+name = "client_example"
+path = "examples/client_example.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[lints.clippy]
+# Allow implicit returns (idiomatic Rust)
+implicit_return = "allow"
+# Allow large enum variants
+large_enum_variant = "allow"
+# Allow module name repetitions
+module_name_repetitions = "allow"
+# Allow single match else
+single_match_else = "allow"
+# Allow indexing/slicing
+indexing_slicing = "allow"
+# Allow arithmetic side effects
+arithmetic_side_effects = "allow"
+# Allow casts
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"

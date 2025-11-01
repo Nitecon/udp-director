@@ -1,11 +1,11 @@
-﻿# Rust / Cargo
+# Rust / Cargo
 # Build outputs
 /target/
 /debug/
 /release/
 
-# Lockfile (keep ignored for libraries; remove this line for binaries/apps)
-Cargo.lock
+# Lockfile (binaries should commit this, but keeping ignored for now)
+# Cargo.lock
 
 # rustfmt backup files
 **/*.rs.bk
@@ -42,3 +42,7 @@ Thumbs.db
 
 # Temporary scratch files
 task.md
+
+# Local configuration files
+config.yaml
+*.local.yaml

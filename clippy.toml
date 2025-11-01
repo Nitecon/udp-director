@@ -1,0 +1,4 @@
+# This file configures 'clippy', Rust's linter.
+# Clippy lints are configured in Cargo.toml under [lints.clippy]
+# This file is kept for documentation purposes but is not used.
+# See Cargo.toml for the actual configuration.

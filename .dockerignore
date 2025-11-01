@@ -1,0 +1,8 @@
+target/
+.git/
+.gitignore
+.idea/
+*.md
+Docs/
+k8s/
+task.md
