@@ -1,0 +1,44 @@
+﻿# Rust / Cargo
+# Build outputs
+/target/
+/debug/
+/release/
+
+# Lockfile (keep ignored for libraries; remove this line for binaries/apps)
+Cargo.lock
+
+# rustfmt backup files
+**/*.rs.bk
+
+# Rust doc output
+/doc/
+
+# Coverage and profiling artifacts
+coverage/
+*.profraw
+*.profdata
+
+# Windows/MSVC artifacts
+*.pdb
+*.exe
+*.dll
+
+# Tooling caches
+.sccache/
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Common editor swap/backup files
+*~
+*.swp
+*.swo
+
+# Temporary scratch files
+task.md
