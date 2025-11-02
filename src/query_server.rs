@@ -235,7 +235,7 @@ impl QueryServer {
 
         let address = self
             .k8s_client
-            .extract_address(resource, address_path)
+            .extract_address(resource, address_path, mapping.address_type.as_deref())
             .map_err(|e| QueryResponse::Error {
                 error: format!("Failed to extract address: {}", e),
             })?;

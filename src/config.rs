@@ -82,8 +82,15 @@ pub struct ResourceMapping {
 
     /// DIRECT RESOURCE APPROACH (New)
     /// JSONPath to extract the address from the resource (e.g., "status.address")
+    /// If addressType is specified, this should point to an addresses array (e.g., "status.addresses")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_path: Option<String>,
+
+    /// Type of address to filter from the addresses array (e.g., "PodIP", "InternalIP")
+    /// Used in conjunction with addressPath when the resource has multiple addresses.
+    /// If specified, will search the array at addressPath for an entry with matching "type" field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_type: Option<String>,
 
     /// JSONPath to extract the port from the resource (e.g., "status.ports[0].port")
     /// OR simple port name to look up (e.g., "default")

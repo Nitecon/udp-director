@@ -39,5 +39,12 @@ data:
         group: "agones.dev"
         version: "v1"
         resource: "gameservers"
-        addressPath: "status.address"
+        # For portPolicy: None, use PodIP from the addresses array
+        # For portPolicy: Dynamic/Passthrough, you can use:
+        #   addressPath: "status.address" (without addressType)
+        # Or explicitly use InternalIP:
+        #   addressPath: "status.addresses"
+        #   addressType: "InternalIP"
+        addressPath: "status.addresses"
+        addressType: "PodIP"
         portName: "default"

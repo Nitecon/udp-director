@@ -137,7 +137,13 @@ impl K8sClient {
     }
 
     /// Extract address from a resource using JSONPath
-    pub fn extract_address(&self, resource: &DynamicObject, address_path: &str) -> Result<String> {
+    /// If address_type is provided, will search an array of addresses for the matching type
+    pub fn extract_address(
+        &self,
+        resource: &DynamicObject,
+        address_path: &str,
+        address_type: Option<&str>,
+    ) -> Result<String> {
         let resource_json =
             serde_json::to_value(resource).context("Failed to serialize resource to JSON")?;
 
@@ -148,9 +154,40 @@ impl K8sClient {
                 address_path
             ))?;
 
-        match value {
-            Value::String(s) => Ok(s),
-            _ => anyhow::bail!("Address path did not resolve to a string: {}", address_path),
+        // If address_type is specified, search the array for matching type
+        if let Some(addr_type) = address_type {
+            match value {
+                Value::Array(addresses) => {
+                    // Search for address with matching type
+                    for addr_entry in addresses {
+                        if let Some(Value::String(entry_type)) = addr_entry.get("type") {
+                            if entry_type == addr_type {
+                                if let Some(Value::String(address)) = addr_entry.get("address") {
+                                    debug!(
+                                        "Found address of type '{}': {}",
+                                        addr_type, address
+                                    );
+                                    return Ok(address.to_string());
+                                }
+                            }
+                        }
+                    }
+                    anyhow::bail!(
+                        "No address found with type '{}' in addresses array",
+                        addr_type
+                    )
+                }
+                _ => anyhow::bail!(
+                    "Address path did not resolve to array when addressType is specified: {}",
+                    address_path
+                ),
+            }
+        } else {
+            // Simple string extraction (original behavior)
+            match value {
+                Value::String(s) => Ok(s),
+                _ => anyhow::bail!("Address path did not resolve to a string: {}", address_path),
+            }
         }
     }
 

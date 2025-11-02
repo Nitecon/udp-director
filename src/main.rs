@@ -257,7 +257,7 @@ fn extract_and_log_target(
 ) {
     use tracing::error;
 
-    match k8s_client.extract_address(resource, address_path) {
+    match k8s_client.extract_address(resource, address_path, mapping.address_type.as_deref()) {
         Ok(address) => {
             match k8s_client.extract_port(
                 resource,

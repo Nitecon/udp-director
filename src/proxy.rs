@@ -341,7 +341,7 @@ impl DataProxy {
         mapping: &crate::config::ResourceMapping,
         address_path: &str,
     ) -> Result<(String, u16)> {
-        let address = self.k8s_client.extract_address(resource, address_path)?;
+        let address = self.k8s_client.extract_address(resource, address_path, mapping.address_type.as_deref())?;
         let port = self.k8s_client.extract_port(
             resource,
             mapping.port_path.as_deref(),
