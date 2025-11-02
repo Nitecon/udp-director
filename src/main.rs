@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio::signal;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -121,14 +122,28 @@ async fn main() -> Result<()> {
     info!("Data port: {}", config.data_port);
     info!("Metrics port: 9090");
 
-    // Wait for all tasks
+    // Wait for shutdown signal or task termination
     tokio::select! {
-        _ = query_handle => warn!("Query server terminated"),
-        _ = proxy_handle => warn!("Data proxy terminated"),
-        _ = monitor_handle => warn!("Resource monitor terminated"),
-        _ = metrics_handle => warn!("Metrics server terminated"),
+        _ = shutdown_signal() => {
+            info!("Shutdown signal received, initiating graceful shutdown...");
+        }
+        _ = query_handle => warn!("Query server terminated unexpectedly"),
+        _ = proxy_handle => warn!("Data proxy terminated unexpectedly"),
+        _ = monitor_handle => warn!("Resource monitor terminated unexpectedly"),
+        _ = metrics_handle => warn!("Metrics server terminated unexpectedly"),
     }
 
+    // Perform graceful shutdown
+    info!("Shutting down UDP Director...");
+    info!("Active sessions at shutdown: {}", session_manager.count());
+    
+    // Clear all active sessions
+    session_manager.clear_all();
+    
+    // Give tasks a moment to finish their current operations
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    
+    info!("UDP Director shutdown complete");
     Ok(())
 }
 
@@ -279,4 +294,33 @@ fn handle_query_error(
     );
     error!("  This may be a permissions issue. Check RBAC configuration.");
     error!("  Clients without tokens will fail to connect.");
+}
+
+/// Wait for shutdown signal (SIGTERM, SIGINT, or Ctrl+C)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received Ctrl+C signal");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM signal");
+        },
+    }
 }

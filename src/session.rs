@@ -87,6 +87,15 @@ impl SessionManager {
         self.sessions.len()
     }
 
+    /// Clear all sessions (called during shutdown)
+    pub fn clear_all(&self) {
+        let count = self.sessions.len();
+        self.sessions.clear();
+        if count > 0 {
+            info!("Cleared {} active sessions during shutdown", count);
+        }
+    }
+
     /// Cleanup loop to remove timed-out sessions
     async fn cleanup_loop(&self) {
         let mut cleanup_interval = interval(Duration::from_secs(30));
