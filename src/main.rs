@@ -6,6 +6,7 @@ mod config;
 mod k8s_client;
 mod proxy;
 mod query_server;
+mod resource_monitor;
 mod session;
 mod token_cache;
 
@@ -13,6 +14,7 @@ use config::Config;
 use k8s_client::K8sClient;
 use proxy::DataProxy;
 use query_server::QueryServer;
+use resource_monitor::ResourceMonitor;
 use session::SessionManager;
 use token_cache::TokenCache;
 
@@ -85,6 +87,21 @@ async fn main() -> Result<()> {
         })
     };
 
+    // Start Resource Monitor
+    let monitor_handle = {
+        let resource_monitor = ResourceMonitor::new(
+            config.clone(),
+            k8s_client.clone(),
+            session_manager.clone(),
+            10, // Check every 10 seconds
+        );
+        tokio::spawn(async move {
+            if let Err(e) = resource_monitor.run().await {
+                warn!("Resource monitor error: {}", e);
+            }
+        })
+    };
+
     info!("UDP Director is running");
     info!("Query port: {}", config.query_port);
     info!("Data port: {}", config.data_port);
@@ -94,6 +111,7 @@ async fn main() -> Result<()> {
         _ = config_handle => warn!("Config watcher terminated"),
         _ = query_handle => warn!("Query server terminated"),
         _ = proxy_handle => warn!("Data proxy terminated"),
+        _ = monitor_handle => warn!("Resource monitor terminated"),
     }
 
     Ok(())
@@ -119,7 +137,7 @@ async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
     if let Some(status_query) = &default_endpoint.status_query {
         info!("  Status Query:");
         info!("    JSONPath: {}", status_query.json_path);
-        info!("    Expected Value: {}", status_query.expected_value);
+        info!("    Expected Values: {:?}", status_query.expected_values);
     }
 
     // Try to resolve the default endpoint
@@ -130,7 +148,6 @@ async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
         Some(mapping) => {
             info!("  Resource Mapping Found:");
             info!("    Group: {}", mapping.group);
-            info!("    Version: {}", mapping.version);
             info!("    Resource: {}", mapping.resource);
 
             // Convert status query
@@ -140,7 +157,7 @@ async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
                     .as_ref()
                     .map(|sq| k8s_client::StatusQuery {
                         json_path: sq.json_path.clone(),
-                        expected_value: sq.expected_value.clone(),
+                        expected_values: sq.expected_values.clone(),
                     });
 
             // Query for matching resources

@@ -104,9 +104,21 @@ impl K8sClient {
         let value = self.extract_json_path(&resource_json.unwrap(), &query.json_path);
 
         match value {
-            Some(Value::String(s)) => s == query.expected_value,
-            Some(Value::Number(n)) => n.to_string() == query.expected_value,
-            Some(Value::Bool(b)) => b.to_string() == query.expected_value,
+            Some(Value::String(s)) => query.expected_values.iter().any(|expected| expected == &s),
+            Some(Value::Number(n)) => {
+                let n_str = n.to_string();
+                query
+                    .expected_values
+                    .iter()
+                    .any(|expected| expected == &n_str)
+            }
+            Some(Value::Bool(b)) => {
+                let b_str = b.to_string();
+                query
+                    .expected_values
+                    .iter()
+                    .any(|expected| expected == &b_str)
+            }
             _ => false,
         }
     }
@@ -278,7 +290,7 @@ impl K8sClient {
 #[derive(Debug, Clone)]
 pub struct StatusQuery {
     pub json_path: String,
-    pub expected_value: String,
+    pub expected_values: Vec<String>,
 }
 
 #[cfg(test)]

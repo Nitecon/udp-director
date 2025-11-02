@@ -29,7 +29,9 @@ data:
         agones.dev/fleet: "m-tutorial"
       statusQuery:
         jsonPath: "status.state"
-        expectedValue: "Ready"
+        expectedValues:
+          - "Ready"
+          - "Allocated"
 
     # Resource type definitions for client queries
     resourceQueryMapping:

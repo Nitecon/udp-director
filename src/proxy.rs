@@ -2,12 +2,20 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::k8s_client::K8sClient;
 use crate::session::SessionManager;
 use crate::token_cache::TokenCache;
+
+/// Cached default endpoint target
+#[derive(Clone, Debug)]
+struct DefaultEndpointCache {
+    address: String,
+    port: u16,
+}
 
 /// Data Proxy for Phase 2 & 3 (TCP/UDP with session reset)
 pub struct DataProxy {
@@ -16,6 +24,7 @@ pub struct DataProxy {
     session_manager: SessionManager,
     config: Config,
     k8s_client: K8sClient,
+    default_endpoint_cache: Arc<RwLock<Option<DefaultEndpointCache>>>,
 }
 
 impl DataProxy {
@@ -33,6 +42,7 @@ impl DataProxy {
             session_manager,
             config,
             k8s_client,
+            default_endpoint_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -180,93 +190,40 @@ impl DataProxy {
                 // Token packet is consumed, not forwarded
             }
             None => {
-                // Not a valid token - route to default endpoint using query
-                let default_endpoint = self.config.get_default_endpoint();
+                // Not a valid token - route to default endpoint
+                debug!(
+                    "No valid token found, routing to default endpoint for {}",
+                    client_addr
+                );
 
-                // Look up the resource mapping for the default endpoint
-                let mapping = self
-                    .config
-                    .resource_query_mapping
-                    .get(&default_endpoint.resource_type)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Unknown resource type in default_endpoint: {}",
-                            default_endpoint.resource_type
-                        )
-                    })?;
-
-                // Convert status query if present
-                let status_query = default_endpoint.status_query.as_ref().map(|sq| {
-                    crate::k8s_client::StatusQuery {
-                        json_path: sq.json_path.clone(),
-                        expected_value: sq.expected_value.clone(),
-                    }
-                });
-
-                // Query for matching resources
-                let resources = self
-                    .k8s_client
-                    .query_resources(
-                        &default_endpoint.namespace,
-                        mapping,
-                        status_query.as_ref(),
-                        default_endpoint.label_selector.as_ref(),
-                    )
-                    .await?;
-
-                if resources.is_empty() {
-                    anyhow::bail!("No matching resources found for default endpoint");
-                }
-
-                // Select the first matching resource
-                let selected_resource = &resources[0];
-
-                // Extract address and port using the same logic as query server
-                let (cluster_ip, port) = if let Some(address_path) = &mapping.address_path {
-                    // Direct resource approach
-                    let address = self
-                        .k8s_client
-                        .extract_address(selected_resource, address_path)?;
-                    let port = self.k8s_client.extract_port(
-                        selected_resource,
-                        mapping.port_path.as_deref(),
-                        mapping.port_name.as_deref(),
-                    )?;
-                    (address, port)
+                // Check cache first
+                let cached_endpoint = self.default_endpoint_cache.read().await;
+                let target_addr = if let Some(cache) = cached_endpoint.as_ref() {
+                    // Use cached endpoint
+                    debug!(
+                        "Using cached default endpoint: {}:{}",
+                        cache.address, cache.port
+                    );
+                    format!("{}:{}", cache.address, cache.port).parse()?
                 } else {
-                    // Service-based approach
-                    let resource_name = selected_resource
-                        .metadata
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let service_selector =
-                        mapping.service_selector_label.as_ref().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "service_selector_label required for service-based approach"
-                            )
-                        })?;
-                    let service_port_name =
-                        mapping.service_target_port_name.as_ref().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "service_target_port_name required for service-based approach"
-                            )
-                        })?;
+                    // Cache miss - need to query and cache
+                    drop(cached_endpoint); // Release read lock
 
-                    self.k8s_client
-                        .find_service_for_resource(
-                            &default_endpoint.namespace,
-                            &resource_name,
-                            service_selector,
-                            service_port_name,
-                        )
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("No service found for default endpoint resource")
-                        })?
+                    debug!("Cache miss, querying for default endpoint");
+                    let (address, port) = self.query_default_endpoint().await?;
+
+                    // Cache the result
+                    let mut cache_write = self.default_endpoint_cache.write().await;
+                    *cache_write = Some(DefaultEndpointCache {
+                        address: address.clone(),
+                        port,
+                    });
+                    drop(cache_write);
+
+                    info!("Cached default endpoint: {}:{}", address, port);
+                    format!("{}:{}", address, port).parse()?
                 };
 
-                let target_addr: SocketAddr = format!("{}:{}", cluster_ip, port).parse()?;
                 self.session_manager.upsert(client_addr, target_addr);
 
                 info!(
@@ -281,6 +238,99 @@ impl DataProxy {
         }
 
         Ok(())
+    }
+
+    /// Query Kubernetes for the default endpoint
+    async fn query_default_endpoint(&self) -> Result<(String, u16)> {
+        let default_endpoint = self.config.get_default_endpoint();
+
+        // Look up the resource mapping for the default endpoint
+        let mapping = self
+            .config
+            .resource_query_mapping
+            .get(&default_endpoint.resource_type)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Unknown resource type in default_endpoint: {}",
+                    default_endpoint.resource_type
+                )
+            })?;
+
+        debug!(
+            "Querying for default endpoint: type={}, namespace={}, labels={:?}",
+            default_endpoint.resource_type,
+            default_endpoint.namespace,
+            default_endpoint.label_selector
+        );
+
+        // Convert status query if present
+        let status_query =
+            default_endpoint
+                .status_query
+                .as_ref()
+                .map(|sq| crate::k8s_client::StatusQuery {
+                    json_path: sq.json_path.clone(),
+                    expected_values: sq.expected_values.clone(),
+                });
+
+        // Query for matching resources
+        let resources = self
+            .k8s_client
+            .query_resources(
+                &default_endpoint.namespace,
+                mapping,
+                status_query.as_ref(),
+                default_endpoint.label_selector.as_ref(),
+            )
+            .await?;
+
+        debug!("Query returned {} resources", resources.len());
+
+        if resources.is_empty() {
+            anyhow::bail!("No matching resources found for default endpoint");
+        }
+
+        // Select the first matching resource
+        let selected_resource = &resources[0];
+
+        // Extract address and port using the same logic as query server
+        let (cluster_ip, port) = if let Some(address_path) = &mapping.address_path {
+            // Direct resource approach
+            let address = self
+                .k8s_client
+                .extract_address(selected_resource, address_path)?;
+            let port = self.k8s_client.extract_port(
+                selected_resource,
+                mapping.port_path.as_deref(),
+                mapping.port_name.as_deref(),
+            )?;
+            (address, port)
+        } else {
+            // Service-based approach
+            let resource_name = selected_resource
+                .metadata
+                .name
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let service_selector = mapping.service_selector_label.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("service_selector_label required for service-based approach")
+            })?;
+            let service_port_name = mapping.service_target_port_name.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("service_target_port_name required for service-based approach")
+            })?;
+
+            self.k8s_client
+                .find_service_for_resource(
+                    &default_endpoint.namespace,
+                    &resource_name,
+                    service_selector,
+                    service_port_name,
+                )
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No service found for default endpoint resource"))?
+        };
+
+        Ok((cluster_ip, port))
     }
 
     /// Proxy a packet to the target
@@ -320,6 +370,7 @@ impl Clone for DataProxy {
             session_manager: self.session_manager.clone(),
             config: self.config.clone(),
             k8s_client: self.k8s_client.clone(),
+            default_endpoint_cache: self.default_endpoint_cache.clone(),
         }
     }
 }

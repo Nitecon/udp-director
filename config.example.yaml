@@ -16,7 +16,9 @@ defaultEndpoint:
     agones.dev/fleet: "default-fleet"
   statusQuery:
     jsonPath: "status.state"
-    expectedValue: "Ready"
+    expectedValues:
+      - "Ready"
+      - "Allocated"
 
 # How long a token is valid for lookup (in seconds)
 tokenTtlSeconds: 30

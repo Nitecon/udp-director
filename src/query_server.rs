@@ -24,7 +24,7 @@ pub struct QueryRequest {
 #[serde(rename_all = "camelCase")]
 pub struct StatusQueryDto {
     pub json_path: String,
-    pub expected_value: String,
+    pub expected_values: Vec<String>,
 }
 
 /// Query response to client
@@ -138,7 +138,7 @@ impl QueryServer {
         // Convert status query
         let status_query = request.status_query.as_ref().map(|sq| StatusQuery {
             json_path: sq.json_path.clone(),
-            expected_value: sq.expected_value.clone(),
+            expected_values: sq.expected_values.clone(),
         });
 
         // Query Kubernetes for matching resources
@@ -287,7 +287,7 @@ mod tests {
             "namespace": "game-servers",
             "statusQuery": {
                 "jsonPath": "status.state",
-                "expectedValue": "Allocated"
+                "expectedValues": ["Allocated", "Ready"]
             },
             "labelSelector": {
                 "game.example.com/map": "de_dust2"
@@ -299,6 +299,11 @@ mod tests {
         assert_eq!(request.namespace, "game-servers");
         assert!(request.status_query.is_some());
         assert!(request.label_selector.is_some());
+
+        let status_query = request.status_query.unwrap();
+        assert_eq!(status_query.expected_values.len(), 2);
+        assert_eq!(status_query.expected_values[0], "Allocated");
+        assert_eq!(status_query.expected_values[1], "Ready");
     }
 
     #[test]

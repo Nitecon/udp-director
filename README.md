@@ -8,13 +8,13 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 
 ## Quick Links
 
-- **[Technical Reference](Docs/TECHNICAL_REFERENCE.md)** - Complete deployment and technical guide
+- **[Technical Reference](Docs/TechnicalReference.md)** - Complete deployment and technical guide
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
-- **[Testing Guide](Docs/TESTING.md)** - Unit, integration, and load testing
-- **[Quick Reference](Docs/QUICK_REFERENCE.md)** - Commands and API reference
-- **[Docker Registry Setup](Docs/DOCKER_REGISTRY.md)** - Registry configuration
-- **[Project Summary](Docs/PROJECT_SUMMARY.md)** - Implementation status
-- **[Changelog](Docs/CHANGELOG.md)** - Version history
+- **[Testing Guide](Docs/Testing.md)** - Unit, integration, and load testing
+- **[Quick Reference](Docs/QuickReference.md)** - Commands and API reference
+- **[Docker Registry Setup](Docs/DockerRegistry.md)** - Registry configuration
+- **[Project Summary](Docs/ProjectSummary.md)** - Implementation status
+- **[Changelog](Docs/Changelog.md)** - Version history
 
 ## What Problem Does This Solve?
 

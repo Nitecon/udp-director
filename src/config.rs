@@ -57,8 +57,8 @@ pub struct StatusQueryConfig {
     /// JSONPath to the status field (e.g., "status.state")
     pub json_path: String,
 
-    /// Expected value for the status field
-    pub expected_value: String,
+    /// Expected values for the status field (matches if any value matches)
+    pub expected_values: Vec<String>,
 }
 
 /// Configuration for mapping a resource type to Kubernetes resources
@@ -220,7 +220,7 @@ mod tests {
                 label_selector: Some(label_selector),
                 status_query: Some(StatusQueryConfig {
                     json_path: "status.state".to_string(),
-                    expected_value: "Ready".to_string(),
+                    expected_values: vec!["Ready".to_string()],
                 }),
             },
             token_ttl_seconds: 30,
@@ -232,6 +232,32 @@ mod tests {
         let endpoint = config.get_default_endpoint();
         assert_eq!(endpoint.resource_type, "gameserver");
         assert_eq!(endpoint.namespace, "default");
+    }
+
+    #[test]
+    fn test_default_endpoint_without_status_query() {
+        let mut label_selector = HashMap::new();
+        label_selector.insert("agones.dev/fleet".to_string(), "m-tutorial".to_string());
+
+        let config = Config {
+            query_port: 9000,
+            data_port: 7777,
+            default_endpoint: DefaultEndpoint {
+                resource_type: "gameserver".to_string(),
+                namespace: "starx".to_string(),
+                label_selector: Some(label_selector),
+                status_query: None, // No status filtering
+            },
+            token_ttl_seconds: 30,
+            session_timeout_seconds: 300,
+            control_packet_magic_bytes: "FFFFFFFF5245534554".to_string(),
+            resource_query_mapping: HashMap::new(),
+        };
+
+        let endpoint = config.get_default_endpoint();
+        assert_eq!(endpoint.resource_type, "gameserver");
+        assert_eq!(endpoint.namespace, "starx");
+        assert!(endpoint.status_query.is_none());
     }
 
     #[test]
