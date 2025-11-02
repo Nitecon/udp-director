@@ -151,7 +151,6 @@ impl Config {
         hex::decode(&self.control_packet_magic_bytes)
             .with_context(|| "Failed to decode control_packet_magic_bytes")
     }
-
 }
 
 #[cfg(test)]

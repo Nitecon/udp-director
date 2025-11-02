@@ -136,13 +136,13 @@ async fn main() -> Result<()> {
     // Perform graceful shutdown
     info!("Shutting down UDP Director...");
     info!("Active sessions at shutdown: {}", session_manager.count());
-    
+
     // Clear all active sessions
     session_manager.clear_all();
-    
+
     // Give tasks a moment to finish their current operations
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    
+
     info!("UDP Director shutdown complete");
     Ok(())
 }
