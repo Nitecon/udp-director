@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/docker/v/nitecon/udp-director?label=Docker%20Hub)](https://hub.docker.com/r/nitecon/udp-director)
-[![License](https://img.shields.io/badge/License-TBD-blue)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-green)]()
 
 A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing with token-based sessions and live migration support. Perfect for game server matchmaking, load balancing, and zero-downtime server switching.
@@ -223,7 +223,7 @@ See [Docker Registry Setup](Docs/DockerRegistry.md) for more details.
 
 ## License
 
-[Add license information]
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
