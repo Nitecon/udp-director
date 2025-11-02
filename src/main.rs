@@ -59,16 +59,6 @@ async fn main() -> Result<()> {
     let session_manager = SessionManager::new(config.session_timeout_seconds);
     let default_endpoint_cache = DefaultEndpointCacheHandle::new();
 
-    // Start config watcher
-    let config_handle = {
-        let config_clone = config.clone();
-        tokio::spawn(async move {
-            if let Err(e) = config_clone.watch_for_changes().await {
-                warn!("Config watcher error: {}", e);
-            }
-        })
-    };
-
     // Start Query Server (Phase 1)
     let query_handle = {
         let query_server = QueryServer::new(
@@ -133,7 +123,6 @@ async fn main() -> Result<()> {
 
     // Wait for all tasks
     tokio::select! {
-        _ = config_handle => warn!("Config watcher terminated"),
         _ = query_handle => warn!("Query server terminated"),
         _ = proxy_handle => warn!("Data proxy terminated"),
         _ = monitor_handle => warn!("Resource monitor terminated"),

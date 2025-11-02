@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::info;
 
 /// Main configuration structure for the UDP Director
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,19 +152,6 @@ impl Config {
             .with_context(|| "Failed to decode control_packet_magic_bytes")
     }
 
-    /// Watch for configuration changes (simplified version)
-    /// In a full implementation, this would use the Kubernetes API to watch the ConfigMap
-    pub async fn watch_for_changes(&self) -> Result<()> {
-        // This is a placeholder for ConfigMap watching
-        // A full implementation would use kube-rs to watch the ConfigMap resource
-        // and reload the configuration when it changes
-        info!("Config watcher started (placeholder - not yet implemented)");
-
-        // Keep the task alive
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        }
-    }
 }
 
 #[cfg(test)]
