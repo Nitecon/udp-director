@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 
 /// Main configuration structure for the UDP Director
@@ -167,38 +165,6 @@ impl Config {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
         }
-    }
-}
-
-/// Global configuration holder with hot-reload support
-#[allow(dead_code)]
-pub struct ConfigHolder {
-    config: Arc<RwLock<Config>>,
-}
-
-impl ConfigHolder {
-    /// Create a new config holder
-    #[allow(dead_code)]
-    pub fn new(config: Config) -> Self {
-        Self {
-            config: Arc::new(RwLock::new(config)),
-        }
-    }
-
-    /// Get a read lock on the config
-    #[allow(dead_code)]
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Config> {
-        self.config.read().await
-    }
-
-    /// Reload the configuration
-    #[allow(dead_code)]
-    pub async fn reload(&self) -> Result<()> {
-        let new_config = Config::load().await?;
-        let mut config = self.config.write().await;
-        *config = new_config;
-        info!("Configuration reloaded successfully");
-        Ok(())
     }
 }
 

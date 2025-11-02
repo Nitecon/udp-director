@@ -244,7 +244,6 @@ impl DataProxy {
     async fn query_default_endpoint(&self) -> Result<(String, u16)> {
         let default_endpoint = self.config.get_default_endpoint();
 
-        // Look up the resource mapping for the default endpoint
         let mapping = self
             .config
             .resource_query_mapping
@@ -263,7 +262,6 @@ impl DataProxy {
             default_endpoint.label_selector
         );
 
-        // Convert status query if present
         let status_query =
             default_endpoint
                 .status_query
@@ -273,7 +271,6 @@ impl DataProxy {
                     expected_values: sq.expected_values.clone(),
                 });
 
-        // Query for matching resources
         let resources = self
             .k8s_client
             .query_resources(
@@ -290,47 +287,72 @@ impl DataProxy {
             anyhow::bail!("No matching resources found for default endpoint");
         }
 
-        // Select the first matching resource
         let selected_resource = &resources[0];
+        self.extract_endpoint_target(selected_resource, mapping, &default_endpoint.namespace)
+            .await
+    }
 
-        // Extract address and port using the same logic as query server
-        let (cluster_ip, port) = if let Some(address_path) = &mapping.address_path {
-            // Direct resource approach
-            let address = self
-                .k8s_client
-                .extract_address(selected_resource, address_path)?;
-            let port = self.k8s_client.extract_port(
-                selected_resource,
-                mapping.port_path.as_deref(),
-                mapping.port_name.as_deref(),
-            )?;
-            (address, port)
+    /// Extract target address and port from a resource
+    async fn extract_endpoint_target(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        namespace: &str,
+    ) -> Result<(String, u16)> {
+        if let Some(address_path) = &mapping.address_path {
+            self.extract_direct_endpoint(resource, mapping, address_path)
         } else {
-            // Service-based approach
-            let resource_name = selected_resource
-                .metadata
-                .name
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            let service_selector = mapping.service_selector_label.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("service_selector_label required for service-based approach")
-            })?;
-            let service_port_name = mapping.service_target_port_name.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("service_target_port_name required for service-based approach")
-            })?;
+            self.extract_service_endpoint(resource, mapping, namespace)
+                .await
+        }
+    }
 
-            self.k8s_client
-                .find_service_for_resource(
-                    &default_endpoint.namespace,
-                    &resource_name,
-                    service_selector,
-                    service_port_name,
-                )
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("No service found for default endpoint resource"))?
-        };
+    /// Extract endpoint using direct resource approach
+    fn extract_direct_endpoint(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        address_path: &str,
+    ) -> Result<(String, u16)> {
+        let address = self.k8s_client.extract_address(resource, address_path)?;
+        let port = self.k8s_client.extract_port(
+            resource,
+            mapping.port_path.as_deref(),
+            mapping.port_name.as_deref(),
+        )?;
+        Ok((address, port))
+    }
 
-        Ok((cluster_ip, port))
+    /// Extract endpoint using service-based approach
+    async fn extract_service_endpoint(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        namespace: &str,
+    ) -> Result<(String, u16)> {
+        let resource_name = resource
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let service_selector = mapping.service_selector_label.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("service_selector_label required for service-based approach")
+        })?;
+
+        let service_port_name = mapping.service_target_port_name.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("service_target_port_name required for service-based approach")
+        })?;
+
+        self.k8s_client
+            .find_service_for_resource(
+                namespace,
+                &resource_name,
+                service_selector,
+                service_port_name,
+            )
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No service found for default endpoint resource"))
     }
 
     /// Proxy a packet to the target

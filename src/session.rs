@@ -27,7 +27,6 @@ impl Session {
     }
 
     /// Check if the session has timed out
-    #[allow(dead_code)]
     pub fn is_timed_out(&self, timeout_seconds: u64) -> bool {
         self.last_activity.elapsed() > Duration::from_secs(timeout_seconds)
     }
@@ -50,19 +49,12 @@ impl SessionManager {
         };
 
         // Start cleanup task
-        let _cleanup_manager = manager.clone();
-        tokio::spawn(async move {});
+        let cleanup_manager = manager.clone();
+        tokio::spawn(async move {
+            cleanup_manager.cleanup_loop().await;
+        });
 
         manager
-    }
-
-    /// Get or create a session
-    #[allow(dead_code)]
-    pub fn get_or_create(&self, client_addr: SocketAddr, target_addr: SocketAddr) -> Session {
-        self.sessions
-            .entry(client_addr)
-            .or_insert_with(|| Session::new(target_addr))
-            .clone()
     }
 
     /// Get an existing session
@@ -90,21 +82,12 @@ impl SessionManager {
         }
     }
 
-    /// Remove a session
-    #[allow(dead_code)]
-    pub fn remove(&self, client_addr: &SocketAddr) {
-        self.sessions.remove(client_addr);
-        debug!("Session removed: {}", client_addr);
-    }
-
     /// Get the number of active sessions
-    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.sessions.len()
     }
 
     /// Cleanup loop to remove timed-out sessions
-    #[allow(dead_code)]
     async fn cleanup_loop(&self) {
         let mut cleanup_interval = interval(Duration::from_secs(30));
 
@@ -143,7 +126,8 @@ mod tests {
         let client_addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
-        let session = manager.get_or_create(client_addr, target_addr);
+        manager.upsert(client_addr, target_addr);
+        let session = manager.get(&client_addr).unwrap();
         assert_eq!(session.target_addr, target_addr);
         assert_eq!(manager.count(), 1);
     }

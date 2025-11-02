@@ -53,20 +53,6 @@ impl TokenCache {
     pub async fn lookup(&self, token: &str) -> Option<TokenTarget> {
         self.cache.get(token).await
     }
-
-    /// Invalidate a token
-    #[allow(dead_code)]
-    pub async fn invalidate(&self, token: &str) {
-        self.cache.invalidate(token).await;
-    }
-
-    /// Get cache statistics
-    #[allow(dead_code)]
-    pub async fn stats(&self) -> (u64, u64) {
-        let entry_count = self.cache.entry_count();
-        let weighted_size = self.cache.weighted_size();
-        (entry_count, weighted_size)
-    }
 }
 
 #[cfg(test)]
@@ -90,21 +76,6 @@ mod tests {
         let retrieved_target = retrieved.unwrap();
         assert_eq!(retrieved_target.cluster_ip, "10.0.0.1");
         assert_eq!(retrieved_target.port, 7777);
-    }
-
-    #[tokio::test]
-    async fn test_token_invalidation() {
-        let cache = TokenCache::new(60);
-        let target = TokenTarget {
-            cluster_ip: "10.0.0.1".to_string(),
-            port: 7777,
-        };
-
-        let token = cache.generate_token(target).await;
-        assert!(cache.lookup(&token).await.is_some());
-
-        cache.invalidate(&token).await;
-        assert!(cache.lookup(&token).await.is_none());
     }
 
     #[tokio::test]

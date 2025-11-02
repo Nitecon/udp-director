@@ -146,112 +146,145 @@ async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
 
     let default_endpoint = config.get_default_endpoint();
 
-    info!("=== Default Endpoint Configuration ===");
-    info!("  Resource Type: {}", default_endpoint.resource_type);
-    info!("  Namespace: {}", default_endpoint.namespace);
+    log_endpoint_config(default_endpoint);
 
-    if let Some(labels) = &default_endpoint.label_selector {
-        info!("  Label Selector:");
-        for (key, value) in labels {
-            info!("    {} = {}", key, value);
-        }
-    }
-
-    if let Some(status_query) = &default_endpoint.status_query {
-        info!("  Status Query:");
-        info!("    JSONPath: {}", status_query.json_path);
-        info!("    Expected Values: {:?}", status_query.expected_values);
-    }
-
-    // Try to resolve the default endpoint
-    match config
+    let mapping = match config
         .resource_query_mapping
         .get(&default_endpoint.resource_type)
     {
-        Some(mapping) => {
-            info!("  Resource Mapping Found:");
-            info!("    Group: {}", mapping.group);
-            info!("    Resource: {}", mapping.resource);
-
-            // Convert status query
-            let status_query =
-                default_endpoint
-                    .status_query
-                    .as_ref()
-                    .map(|sq| k8s_client::StatusQuery {
-                        json_path: sq.json_path.clone(),
-                        expected_values: sq.expected_values.clone(),
-                    });
-
-            // Query for matching resources
-            match k8s_client
-                .query_resources(
-                    &default_endpoint.namespace,
-                    mapping,
-                    status_query.as_ref(),
-                    default_endpoint.label_selector.as_ref(),
-                )
-                .await
-            {
-                Ok(resources) => {
-                    if resources.is_empty() {
-                        warn!("  ⚠️  No matching resources found for default endpoint!");
-                        warn!("  Clients without tokens will fail to connect.");
-                    } else {
-                        info!("  ✓ Found {} matching resource(s)", resources.len());
-
-                        // Display the first matching resource
-                        if let Some(resource) = resources.first() {
-                            let resource_name =
-                                resource.metadata.name.as_deref().unwrap_or("unknown");
-
-                            info!("  Selected Resource: {}", resource_name);
-
-                            // Try to extract address and port
-                            if let Some(address_path) = &mapping.address_path {
-                                match k8s_client.extract_address(resource, address_path) {
-                                    Ok(address) => {
-                                        match k8s_client.extract_port(
-                                            resource,
-                                            mapping.port_path.as_deref(),
-                                            mapping.port_name.as_deref(),
-                                        ) {
-                                            Ok(port) => {
-                                                info!("  Default Target: {}:{}", address, port);
-                                            }
-                                            Err(e) => {
-                                                error!("  ✗ Failed to extract port: {}", e);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("  ✗ Failed to extract address: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("  ✗ Failed to query default endpoint resources: {}", e);
-                    error!("  Namespace: {}", default_endpoint.namespace);
-                    error!(
-                        "  Resource: {}/{}/{}",
-                        mapping.group, mapping.version, mapping.resource
-                    );
-                    error!("  This may be a permissions issue. Check RBAC configuration.");
-                    error!("  Clients without tokens will fail to connect.");
-                }
-            }
-        }
+        Some(m) => m,
         None => {
             error!(
                 "  ✗ Resource type '{}' not found in resourceQueryMapping!",
                 default_endpoint.resource_type
             );
             error!("  Default endpoint is misconfigured!");
+            info!("======================================");
+            return;
         }
+    };
+
+    log_resource_mapping(mapping);
+
+    let status_query = default_endpoint
+        .status_query
+        .as_ref()
+        .map(|sq| k8s_client::StatusQuery {
+            json_path: sq.json_path.clone(),
+            expected_values: sq.expected_values.clone(),
+        });
+
+    match k8s_client
+        .query_resources(
+            &default_endpoint.namespace,
+            mapping,
+            status_query.as_ref(),
+            default_endpoint.label_selector.as_ref(),
+        )
+        .await
+    {
+        Ok(resources) => handle_query_success(&resources, k8s_client, mapping),
+        Err(e) => handle_query_error(e, default_endpoint, mapping),
     }
 
     info!("======================================");
+}
+
+/// Log the endpoint configuration details
+fn log_endpoint_config(endpoint: &config::DefaultEndpoint) {
+    info!("=== Default Endpoint Configuration ===");
+    info!("  Resource Type: {}", endpoint.resource_type);
+    info!("  Namespace: {}", endpoint.namespace);
+
+    if let Some(labels) = &endpoint.label_selector {
+        info!("  Label Selector:");
+        for (key, value) in labels {
+            info!("    {} = {}", key, value);
+        }
+    }
+
+    if let Some(status_query) = &endpoint.status_query {
+        info!("  Status Query:");
+        info!("    JSONPath: {}", status_query.json_path);
+        info!("    Expected Values: {:?}", status_query.expected_values);
+    }
+}
+
+/// Log the resource mapping details
+fn log_resource_mapping(mapping: &config::ResourceMapping) {
+    info!("  Resource Mapping Found:");
+    info!("    Group: {}", mapping.group);
+    info!("    Resource: {}", mapping.resource);
+}
+
+/// Handle successful resource query
+fn handle_query_success(
+    resources: &[kube::api::DynamicObject],
+    k8s_client: &K8sClient,
+    mapping: &config::ResourceMapping,
+) {
+    if resources.is_empty() {
+        warn!("  ⚠️  No matching resources found for default endpoint!");
+        warn!("  Clients without tokens will fail to connect.");
+        return;
+    }
+
+    info!("  ✓ Found {} matching resource(s)", resources.len());
+
+    if let Some(resource) = resources.first() {
+        let resource_name = resource.metadata.name.as_deref().unwrap_or("unknown");
+        info!("  Selected Resource: {}", resource_name);
+
+        if let Some(address_path) = &mapping.address_path {
+            extract_and_log_target(resource, k8s_client, mapping, address_path);
+        }
+    }
+}
+
+/// Extract and log the target address and port
+fn extract_and_log_target(
+    resource: &kube::api::DynamicObject,
+    k8s_client: &K8sClient,
+    mapping: &config::ResourceMapping,
+    address_path: &str,
+) {
+    use tracing::error;
+
+    match k8s_client.extract_address(resource, address_path) {
+        Ok(address) => {
+            match k8s_client.extract_port(
+                resource,
+                mapping.port_path.as_deref(),
+                mapping.port_name.as_deref(),
+            ) {
+                Ok(port) => {
+                    info!("  Default Target: {}:{}", address, port);
+                }
+                Err(e) => {
+                    error!("  ✗ Failed to extract port: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("  ✗ Failed to extract address: {}", e);
+        }
+    }
+}
+
+/// Handle resource query error
+fn handle_query_error(
+    error: anyhow::Error,
+    endpoint: &config::DefaultEndpoint,
+    mapping: &config::ResourceMapping,
+) {
+    use tracing::error;
+
+    error!("  ✗ Failed to query default endpoint resources: {}", error);
+    error!("  Namespace: {}", endpoint.namespace);
+    error!(
+        "  Resource: {}/{}/{}",
+        mapping.group, mapping.version, mapping.resource
+    );
+    error!("  This may be a permissions issue. Check RBAC configuration.");
+    error!("  Clients without tokens will fail to connect.");
 }

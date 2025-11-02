@@ -121,7 +121,6 @@ impl QueryServer {
 
     /// Process a query request
     async fn process_query(&self, request: QueryRequest) -> QueryResponse {
-        // Look up the resource mapping
         let mapping = match self
             .config
             .resource_query_mapping
@@ -135,38 +134,19 @@ impl QueryServer {
             }
         };
 
-        // Convert status query
         let status_query = request.status_query.as_ref().map(|sq| StatusQuery {
             json_path: sq.json_path.clone(),
             expected_values: sq.expected_values.clone(),
         });
 
-        // Query Kubernetes for matching resources
         let resources = match self
-            .k8s_client
-            .query_resources(
-                &request.namespace,
-                mapping,
-                status_query.as_ref(),
-                request.label_selector.as_ref(),
-            )
+            .query_k8s_resources(&request, mapping, status_query.as_ref())
             .await
         {
             Ok(res) => res,
-            Err(e) => {
-                return QueryResponse::Error {
-                    error: format!("Failed to query resources: {}", e),
-                };
-            }
+            Err(e) => return e,
         };
 
-        if resources.is_empty() {
-            return QueryResponse::Error {
-                error: "No matching resources found".to_string(),
-            };
-        }
-
-        // Select the first matching resource (could be randomized or load-balanced)
         let selected_resource = &resources[0];
         let resource_name = selected_resource
             .metadata
@@ -176,91 +156,141 @@ impl QueryServer {
 
         debug!("Selected resource: {}", resource_name);
 
-        // Determine which approach to use: direct resource or service-based
-        let (cluster_ip, port) = if let Some(address_path) = &mapping.address_path {
-            // DIRECT RESOURCE APPROACH
-            debug!(
-                "Using direct resource approach with address_path: {}",
-                address_path
-            );
-
-            // Extract address from resource
-            let address = match self
-                .k8s_client
-                .extract_address(selected_resource, address_path)
-            {
-                Ok(addr) => addr,
-                Err(e) => {
-                    return QueryResponse::Error {
-                        error: format!("Failed to extract address: {}", e),
-                    };
-                }
-            };
-
-            // Extract port from resource
-            let port = match self.k8s_client.extract_port(
+        let (cluster_ip, port) = match self
+            .extract_target_info(
                 selected_resource,
-                mapping.port_path.as_deref(),
-                mapping.port_name.as_deref(),
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    return QueryResponse::Error {
-                        error: format!("Failed to extract port: {}", e),
-                    };
-                }
-            };
-
-            debug!("Extracted address: {}, port: {}", address, port);
-            (address, port)
-        } else {
-            // SERVICE-BASED APPROACH (Legacy)
-            debug!("Using service-based approach");
-
-            let service_selector = mapping.service_selector_label.as_ref().ok_or_else(|| {
-                "service_selector_label is required for service-based approach".to_string()
-            });
-            let service_port_name = mapping.service_target_port_name.as_ref().ok_or_else(|| {
-                "service_target_port_name is required for service-based approach".to_string()
-            });
-
-            if let (Ok(selector), Ok(port_name)) = (service_selector, service_port_name) {
-                match self
-                    .k8s_client
-                    .find_service_for_resource(
-                        &request.namespace,
-                        &resource_name,
-                        selector,
-                        port_name,
-                    )
-                    .await
-                {
-                    Ok(Some(info)) => info,
-                    Ok(None) => {
-                        return QueryResponse::Error {
-                            error: format!("No service found for resource: {}", resource_name),
-                        };
-                    }
-                    Err(e) => {
-                        return QueryResponse::Error {
-                            error: format!("Failed to find service: {}", e),
-                        };
-                    }
-                }
-            } else {
-                return QueryResponse::Error {
-                    error: "Invalid configuration: service-based approach requires service_selector_label and service_target_port_name".to_string(),
-                };
-            }
+                mapping,
+                &request.namespace,
+                &resource_name,
+            )
+            .await
+        {
+            Ok(info) => info,
+            Err(e) => return e,
         };
 
-        // Generate a token
         let target = TokenTarget { cluster_ip, port };
         let token = self.token_cache.generate_token(target).await;
 
         info!("Generated token for resource: {}", resource_name);
-
         QueryResponse::Success { token }
+    }
+
+    /// Query Kubernetes for matching resources
+    async fn query_k8s_resources(
+        &self,
+        request: &QueryRequest,
+        mapping: &crate::config::ResourceMapping,
+        status_query: Option<&StatusQuery>,
+    ) -> Result<Vec<kube::api::DynamicObject>, QueryResponse> {
+        let resources = self
+            .k8s_client
+            .query_resources(
+                &request.namespace,
+                mapping,
+                status_query,
+                request.label_selector.as_ref(),
+            )
+            .await
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to query resources: {}", e),
+            })?;
+
+        if resources.is_empty() {
+            return Err(QueryResponse::Error {
+                error: "No matching resources found".to_string(),
+            });
+        }
+
+        Ok(resources)
+    }
+
+    /// Extract target IP and port from resource
+    async fn extract_target_info(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        namespace: &str,
+        resource_name: &str,
+    ) -> Result<(String, u16), QueryResponse> {
+        if let Some(address_path) = &mapping.address_path {
+            self.extract_direct_target(resource, mapping, address_path)
+        } else {
+            self.extract_service_target(namespace, resource_name, mapping)
+                .await
+        }
+    }
+
+    /// Extract target using direct resource approach
+    fn extract_direct_target(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        address_path: &str,
+    ) -> Result<(String, u16), QueryResponse> {
+        debug!(
+            "Using direct resource approach with address_path: {}",
+            address_path
+        );
+
+        let address = self
+            .k8s_client
+            .extract_address(resource, address_path)
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to extract address: {}", e),
+            })?;
+
+        let port = self
+            .k8s_client
+            .extract_port(
+                resource,
+                mapping.port_path.as_deref(),
+                mapping.port_name.as_deref(),
+            )
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to extract port: {}", e),
+            })?;
+
+        debug!("Extracted address: {}, port: {}", address, port);
+        Ok((address, port))
+    }
+
+    /// Extract target using service-based approach
+    async fn extract_service_target(
+        &self,
+        namespace: &str,
+        resource_name: &str,
+        mapping: &crate::config::ResourceMapping,
+    ) -> Result<(String, u16), QueryResponse> {
+        debug!("Using service-based approach");
+
+        let selector =
+            mapping
+                .service_selector_label
+                .as_ref()
+                .ok_or_else(|| QueryResponse::Error {
+                    error: "service_selector_label is required for service-based approach"
+                        .to_string(),
+                })?;
+
+        let port_name =
+            mapping
+                .service_target_port_name
+                .as_ref()
+                .ok_or_else(|| QueryResponse::Error {
+                    error: "service_target_port_name is required for service-based approach"
+                        .to_string(),
+                })?;
+
+        self.k8s_client
+            .find_service_for_resource(namespace, resource_name, selector, port_name)
+            .await
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to find service: {}", e),
+            })?
+            .ok_or_else(|| QueryResponse::Error {
+                error: format!("No service found for resource: {}", resource_name),
+            })
     }
 }
 

@@ -16,7 +16,10 @@ pub async fn run_metrics_server(port: u16) -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await?;
 
-    info!("Metrics server listening on http://0.0.0.0:{}/metrics", port);
+    info!(
+        "Metrics server listening on http://0.0.0.0:{}/metrics",
+        port
+    );
 
     loop {
         let (stream, _) = match listener.accept().await {
@@ -45,19 +48,19 @@ async fn handle_request(req: Request<hyper::body::Incoming>) -> Result<Response<
     match req.uri().path() {
         "/metrics" => {
             let metrics = metrics::gather_metrics();
-            Ok(Response::builder()
+            Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "text/plain; version=0.0.4")
                 .body(Full::new(Bytes::from(metrics)))
-                .unwrap())
+                .map_err(|e| anyhow::anyhow!("Failed to build metrics response: {}", e))
         }
-        "/health" => Ok(Response::builder()
+        "/health" => Response::builder()
             .status(StatusCode::OK)
             .body(Full::new(Bytes::from("OK")))
-            .unwrap()),
-        _ => Ok(Response::builder()
+            .map_err(|e| anyhow::anyhow!("Failed to build health response: {}", e)),
+        _ => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Full::new(Bytes::from("Not Found")))
-            .unwrap()),
+            .map_err(|e| anyhow::anyhow!("Failed to build 404 response: {}", e)),
     }
 }

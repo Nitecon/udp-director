@@ -108,7 +108,7 @@ impl ResourceMonitor {
             let resource_name = resource.metadata.name.as_deref().unwrap_or("unknown");
 
             // Try to extract address and port
-            let target = if let Some(address_path) = &mapping.address_path {
+            if let Some(address_path) = &mapping.address_path {
                 match self.k8s_client.extract_address(resource, address_path) {
                     Ok(address) => {
                         match self.k8s_client.extract_port(
@@ -124,9 +124,7 @@ impl ResourceMonitor {
                 }
             } else {
                 Some(resource_name.to_string())
-            };
-
-            target
+            }
         };
 
         // Compare with last known state
@@ -175,7 +173,6 @@ impl ResourceMonitor {
     }
 
     /// Check active sessions and reconnect if targets are unavailable
-    #[allow(dead_code)]
     async fn check_active_sessions(&self) -> Result<()> {
         // This is a placeholder for session health checking
         // In a full implementation, we would:

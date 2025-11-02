@@ -261,29 +261,6 @@ impl K8sClient {
         );
         Ok(None)
     }
-
-    /// Resolve a service name to cluster IP and port
-    #[allow(dead_code)]
-    pub async fn resolve_service(
-        &self,
-        service_name: &str,
-        namespace: &str,
-        port: u16,
-    ) -> Result<(String, u16)> {
-        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
-
-        let service = services
-            .get(service_name)
-            .await
-            .with_context(|| format!("Failed to get service {}.{}", service_name, namespace))?;
-
-        let cluster_ip = service
-            .spec
-            .and_then(|spec| spec.cluster_ip)
-            .context("Service has no cluster IP")?;
-
-        Ok((cluster_ip, port))
-    }
 }
 
 /// Status query for filtering resources

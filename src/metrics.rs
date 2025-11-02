@@ -1,8 +1,8 @@
 use lazy_static::lazy_static;
 use prometheus::{
-    register_gauge, register_gauge_vec, register_histogram_vec,
-    register_int_counter_vec, register_int_gauge, register_int_gauge_vec, Encoder,
-    Gauge, GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, TextEncoder,
+    Encoder, Gauge, GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, TextEncoder,
+    register_gauge, register_gauge_vec, register_histogram_vec, register_int_counter_vec,
+    register_int_gauge, register_int_gauge_vec,
 };
 
 lazy_static! {
@@ -156,21 +156,33 @@ lazy_static! {
 }
 
 /// Gather all metrics and encode them in Prometheus text format
+///
+/// # Panics
+///
+/// This function will panic if the encoder fails or if the buffer contains invalid UTF-8.
+/// In practice, this should never happen as Prometheus metrics are always valid UTF-8.
 pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
-    String::from_utf8(buffer).unwrap()
+    // SAFETY: This should never fail as we're encoding to a Vec<u8>
+    // If it does, it's a critical bug in the prometheus crate
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .expect("Failed to encode metrics - this is a bug");
+    // SAFETY: Prometheus metrics are always valid UTF-8
+    String::from_utf8(buffer).expect("Metrics buffer contained invalid UTF-8 - this is a bug")
 }
 
 /// Record a new session
+#[allow(dead_code)]
 pub fn record_session_start(session_type: &str) {
     TOTAL_SESSIONS.with_label_values(&[session_type]).inc();
     ACTIVE_SESSIONS.inc();
 }
 
 /// Record a session end
+#[allow(dead_code)]
 pub fn record_session_end(session_type: &str, duration_seconds: f64) {
     ACTIVE_SESSIONS.dec();
     SESSION_DURATION
@@ -179,6 +191,7 @@ pub fn record_session_end(session_type: &str, duration_seconds: f64) {
 }
 
 /// Record packet received
+#[allow(dead_code)]
 pub fn record_packet_received(source: &str, size: usize) {
     PACKETS_RECEIVED.with_label_values(&[source]).inc();
     BYTES_RECEIVED
@@ -190,6 +203,7 @@ pub fn record_packet_received(source: &str, size: usize) {
 }
 
 /// Record packet sent
+#[allow(dead_code)]
 pub fn record_packet_sent(destination: &str, size: usize) {
     PACKETS_SENT.with_label_values(&[destination]).inc();
     BYTES_SENT
@@ -201,6 +215,7 @@ pub fn record_packet_sent(destination: &str, size: usize) {
 }
 
 /// Record query request
+#[allow(dead_code)]
 pub fn record_query_request(status: &str, duration_seconds: f64) {
     QUERY_REQUESTS.with_label_values(&[status]).inc();
     QUERY_DURATION
@@ -209,12 +224,14 @@ pub fn record_query_request(status: &str, duration_seconds: f64) {
 }
 
 /// Record token cache access
+#[allow(dead_code)]
 pub fn record_token_cache_access(hit: bool) {
     let result = if hit { "hit" } else { "miss" };
     TOKEN_CACHE_HITS.with_label_values(&[result]).inc();
 }
 
 /// Record Kubernetes query
+#[allow(dead_code)]
 pub fn record_k8s_query(resource_type: &str, status: &str, duration_seconds: f64) {
     K8S_QUERIES
         .with_label_values(&[resource_type, status])
@@ -225,16 +242,19 @@ pub fn record_k8s_query(resource_type: &str, status: &str, duration_seconds: f64
 }
 
 /// Record error
+#[allow(dead_code)]
 pub fn record_error(error_type: &str, component: &str) {
     ERRORS.with_label_values(&[error_type, component]).inc();
 }
 
 /// Update default endpoint availability
+#[allow(dead_code)]
 pub fn update_default_endpoint_available(available: bool) {
     DEFAULT_ENDPOINT_AVAILABLE.set(if available { 1 } else { 0 });
 }
 
 /// Update available resources count
+#[allow(dead_code)]
 pub fn update_available_resources(resource_type: &str, namespace: &str, count: i64) {
     AVAILABLE_RESOURCES
         .with_label_values(&[resource_type, namespace])
