@@ -43,6 +43,15 @@ jsonpath-rust = "1.0.4"
 # Concurrent data structures
 dashmap = "6.1"
 
+# Metrics
+prometheus = { version = "0.13", features = ["process"] }
+lazy_static = "1.5"
+
+# HTTP server for metrics
+hyper = { version = "1.5", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

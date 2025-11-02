@@ -9,6 +9,7 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 ## Quick Links
 
 - **[Technical Reference](Docs/TechnicalReference.md)** - Complete deployment and technical guide
+- **[Metrics Documentation](Docs/Metrics.md)** - Prometheus metrics and monitoring
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
 - **[Testing Guide](Docs/Testing.md)** - Unit, integration, and load testing
 - **[Quick Reference](Docs/QuickReference.md)** - Commands and API reference

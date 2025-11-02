@@ -4,6 +4,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod k8s_client;
+mod metrics;
+mod metrics_server;
 mod proxy;
 mod query_server;
 mod resource_monitor;
@@ -30,6 +32,16 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting UDP Director");
+
+    // Initialize uptime tracking
+    let start_time = std::time::Instant::now();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            metrics::UPTIME_SECONDS.set(start_time.elapsed().as_secs_f64());
+        }
+    });
 
     // Load initial configuration
     let config = Config::load().await?;
@@ -102,9 +114,19 @@ async fn main() -> Result<()> {
         })
     };
 
+    // Start Metrics Server
+    let metrics_handle = {
+        tokio::spawn(async move {
+            if let Err(e) = metrics_server::run_metrics_server(9090).await {
+                warn!("Metrics server error: {}", e);
+            }
+        })
+    };
+
     info!("UDP Director is running");
     info!("Query port: {}", config.query_port);
     info!("Data port: {}", config.data_port);
+    info!("Metrics port: 9090");
 
     // Wait for all tasks
     tokio::select! {
@@ -112,6 +134,7 @@ async fn main() -> Result<()> {
         _ = query_handle => warn!("Query server terminated"),
         _ = proxy_handle => warn!("Data proxy terminated"),
         _ = monitor_handle => warn!("Resource monitor terminated"),
+        _ = metrics_handle => warn!("Metrics server terminated"),
     }
 
     Ok(())
