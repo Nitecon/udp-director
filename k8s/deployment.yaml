@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: udp-director
-          image: registry.nitecon.net/udp-director:latest
+          image: nitecon/udp-director:latest
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
@@ -41,6 +41,9 @@ spec:
             - name: data
               containerPort: 7777
               protocol: UDP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: CONFIG_PATH
               value: "/etc/udp-director/config.yaml"
@@ -91,3 +94,7 @@ spec:
       port: 7777
       targetPort: 7777
       protocol: UDP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP

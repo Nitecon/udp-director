@@ -1,153 +1,163 @@
+[← Back to README](../README.md)
+
 # Docker Registry Configuration
 
 ## Registry Information
 
-**Registry URL**: `registry.nitecon.net`  
-**Image Name**: `udp-director`  
-**Current Status**: Testing/Development
+**Registry**: Docker Hub  
+**Repository**: `nitecon/udp-director`  
+**URL**: https://hub.docker.com/r/nitecon/udp-director  
+**Current Status**: Production
 
-## Building and Pushing
+## Automated Builds (Recommended)
 
-### Quick Start
+Images are automatically built and pushed to Docker Hub via GitHub Actions when:
+- **Push to `main` branch**: Creates `nitecon/udp-director:latest`
+- **Version tags** (e.g., `v1.0.0`): Creates both `nitecon/udp-director:1.0.0` and `nitecon/udp-director:latest`
+
+### Triggering a Release
 
 ```bash
-# Build and push with 'latest' tag
-./dockerpush.sh
+# Create and push a version tag
+git tag v1.0.0
+git push origin v1.0.0
 
-# Build and push with specific version
-./dockerpush.sh v0.1.0
-
-# Using make
-make docker-push
+# GitHub Actions will automatically:
+# 1. Run tests (fmt, clippy, cargo test)
+# 2. Build Docker image
+# 3. Push to nitecon/udp-director:1.0.0
+# 4. Update nitecon/udp-director:latest
 ```
 
-### What the Script Does
+## Manual Build and Push
 
-1. Builds the Docker image from the Dockerfile
-2. Tags it with your registry URL
-3. Pushes to `registry.nitecon.net/udp-director:latest`
-4. If a version is specified, also tags and pushes that version
-
-### Manual Build and Push
-
-If you need to do it manually:
+For local testing or custom builds:
 
 ```bash
+# Login to Docker Hub
+docker login
+
 # Build
-docker build -t registry.nitecon.net/udp-director:latest .
+docker build -t nitecon/udp-director:latest .
 
 # Tag with version (optional)
-docker tag registry.nitecon.net/udp-director:latest registry.nitecon.net/udp-director:v0.1.0
+docker tag nitecon/udp-director:latest nitecon/udp-director:v0.1.0
 
 # Push
-docker push registry.nitecon.net/udp-director:latest
-docker push registry.nitecon.net/udp-director:v0.1.0
+docker push nitecon/udp-director:latest
+docker push nitecon/udp-director:v0.1.0
 ```
 
-## Registry Authentication
+## Docker Hub Authentication
 
-If the registry requires authentication:
+For pushing images (maintainers only):
 
 ```bash
-# Login to registry
-docker login registry.nitecon.net
+# Login to Docker Hub
+docker login
 
-# Enter credentials when prompted
+# Enter your Docker Hub credentials
 ```
+
+### GitHub Actions Secrets
+
+The following secrets are configured for automated builds:
+
+- `DOCKERHUB_USERNAME`: Docker Hub username
+- `DOCKERHUB_TOKEN`: Docker Hub access token (not password)
+
+To create a Docker Hub access token:
+1. Go to https://hub.docker.com/settings/security
+2. Click "New Access Token"
+3. Give it a name (e.g., "GitHub Actions")
+4. Copy the token and add it to GitHub repository secrets
 
 ## Kubernetes Image Pull
 
-The deployment is configured to pull from the registry:
+The deployment is configured to pull from Docker Hub:
 
 ```yaml
 spec:
   containers:
     - name: udp-director
-      image: registry.nitecon.net/udp-director:latest
+      image: nitecon/udp-director:latest
       imagePullPolicy: Always
 ```
 
-### Image Pull Secrets (if needed)
+### Public Images
 
-If your registry requires authentication in Kubernetes:
+Docker Hub images are **public** and do not require authentication to pull. Kubernetes can pull them directly without image pull secrets.
+
+### Using Specific Versions
 
 ```bash
-# Create image pull secret
-kubectl create secret docker-registry nitecon-registry \
-  --docker-server=registry.nitecon.net \
-  --docker-username=<username> \
-  --docker-password=<password> \
-  --docker-email=<email> \
+# Update to a specific version
+kubectl set image deployment/udp-director \
+  udp-director=nitecon/udp-director:1.0.0 \
   -n udp-director
 
-# Add to deployment
-kubectl patch serviceaccount udp-director \
-  -n udp-director \
-  -p '{"imagePullSecrets": [{"name": "nitecon-registry"}]}'
-```
+# Rollback to previous version
+kubectl rollout undo deployment/udp-director -n udp-director
 
-Or add to the deployment.yaml:
-
-```yaml
-spec:
-  serviceAccountName: udp-director
-  imagePullSecrets:
-    - name: nitecon-registry
-  containers:
-    - name: udp-director
-      image: registry.nitecon.net/udp-director:latest
+# Check rollout status
+kubectl rollout status deployment/udp-director -n udp-director
 ```
 
 ## Version Tagging Strategy
 
 ### Development
-- Use `latest` tag for ongoing development
-- `./dockerpush.sh` (defaults to latest)
+- **`latest`**: Automatically updated on every push to `main` branch
+- Use for development and testing
 
-### Testing
+### Release Candidates
+- **`1.0.0-rc1`**: Create tag `v1.0.0-rc1`
 - Use semantic versioning with `-rc` suffix
-- `./dockerpush.sh v0.1.0-rc1`
 
-### Production
-- Use semantic versioning
-- `./dockerpush.sh v0.1.0`
-- `./dockerpush.sh v0.2.0`
+### Production Releases
+- **`1.0.0`**: Create tag `v1.0.0`
+- Use semantic versioning (MAJOR.MINOR.PATCH)
+- Both versioned tag and `latest` are updated
 
-## Verifying the Push
+### Tagging Best Practices
 
 ```bash
-# Check local images
-docker images | grep udp-director
+# For a new feature release
+git tag v1.1.0
+git push origin v1.1.0
 
-# Pull from registry to verify
-docker pull registry.nitecon.net/udp-director:latest
+# For a patch/bugfix
+git tag v1.0.1
+git push origin v1.0.1
+
+# For a release candidate
+git tag v2.0.0-rc1
+git push origin v2.0.0-rc1
+```
+
+## Verifying Images
+
+```bash
+# Check available tags on Docker Hub
+curl -s https://hub.docker.com/v2/repositories/nitecon/udp-director/tags/ | jq '.results[].name'
+
+# Pull from Docker Hub
+docker pull nitecon/udp-director:latest
+docker pull nitecon/udp-director:1.0.0
 
 # Check image details
-docker inspect registry.nitecon.net/udp-director:latest
+docker inspect nitecon/udp-director:latest
+
+# View image layers and size
+docker history nitecon/udp-director:latest
 ```
 
 ## Troubleshooting
 
-### "Cannot connect to registry"
-
-Check network connectivity:
-```bash
-ping registry.nitecon.net
-curl -v https://registry.nitecon.net/v2/
-```
-
-### "Authentication required"
-
-Login to the registry:
-```bash
-docker login registry.nitecon.net
-```
-
 ### "Image pull backoff" in Kubernetes
 
-Check if the image exists:
+Check if the image exists on Docker Hub:
 ```bash
-docker pull registry.nitecon.net/udp-director:latest
+docker pull nitecon/udp-director:latest
 ```
 
 Check pod events:
@@ -155,14 +165,28 @@ Check pod events:
 kubectl describe pod -n udp-director <pod-name>
 ```
 
-Verify image pull secrets are configured if needed.
-
-### Build fails
-
-Ensure you're in the project root:
+Verify the image name in deployment:
 ```bash
-cd /path/to/udp-director
-./dockerpush.sh
+kubectl get deployment udp-director -n udp-director -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+### GitHub Actions build fails
+
+Check the Actions tab in GitHub:
+1. Go to repository → Actions
+2. Click on the failed workflow
+3. Review logs for errors
+
+Common issues:
+- Tests failing (fmt, clippy, cargo test)
+- Docker Hub credentials not configured
+- Build context issues
+
+### Manual push fails
+
+Ensure you're logged in:
+```bash
+docker login
 ```
 
 Check Docker daemon is running:
@@ -170,69 +194,106 @@ Check Docker daemon is running:
 docker ps
 ```
 
-## Migration to Docker Hub
+Verify you have push permissions to the repository.
 
-When ready to move to Docker Hub:
+## Available Images
 
-1. Update `dockerpush.sh`:
-   ```bash
-   REGISTRY="docker.io/yourusername"
-   ```
+### Latest Development
+```bash
+docker pull nitecon/udp-director:latest
+```
 
-2. Update `k8s/deployment.yaml`:
-   ```yaml
-   image: yourusername/udp-director:latest
-   ```
+### Specific Versions
+```bash
+# Check available versions at:
+# https://hub.docker.com/r/nitecon/udp-director/tags
 
-3. Push to Docker Hub:
-   ```bash
-   docker login
-   ./dockerpush.sh
-   ```
+docker pull nitecon/udp-director:1.0.0
+docker pull nitecon/udp-director:1.0.1
+```
 
-## Registry Maintenance
+## Image Maintenance
 
-### Cleaning Old Images
+### Cleaning Local Images
 
-On your local machine:
 ```bash
 # Remove old local images
 docker image prune -a
 
 # Remove specific version
-docker rmi registry.nitecon.net/udp-director:v0.1.0
+docker rmi nitecon/udp-director:1.0.0
+
+# Remove all udp-director images
+docker images | grep nitecon/udp-director | awk '{print $3}' | xargs docker rmi
 ```
 
-On the registry server (if you have access):
-```bash
-# List images
-curl -X GET https://registry.nitecon.net/v2/udp-director/tags/list
+### Managing Docker Hub Images
 
-# Delete specific tag (requires registry API access)
-# Consult your registry documentation
-```
+Docker Hub images can be managed through the web interface:
+
+1. Go to https://hub.docker.com/r/nitecon/udp-director/tags
+2. Click on a tag to view details
+3. Delete old tags if needed (maintainers only)
+
+**Note**: Keep at least the last 3-5 versions for rollback purposes.
 
 ## CI/CD Integration
 
-For automated builds, add to your CI pipeline:
+The project uses GitHub Actions for automated builds. See `.github/workflows/docker.yml` for the complete workflow.
+
+### Workflow Overview
 
 ```yaml
-# Example GitHub Actions
-- name: Build and push
-  run: |
-    docker login registry.nitecon.net -u ${{ secrets.REGISTRY_USER }} -p ${{ secrets.REGISTRY_PASS }}
-    ./dockerpush.sh ${{ github.ref_name }}
+# Triggered on:
+# - Push to main branch
+# - Version tags (v*.*.*)
+# - Manual workflow dispatch
+
+# Steps:
+# 1. Run tests (fmt, clippy, cargo test)
+# 2. Build Docker image with BuildKit
+# 3. Push to Docker Hub
+# 4. Tag appropriately (latest and/or version)
 ```
 
-## Current Configuration Summary
+### Workflow Features
 
-- **Registry**: registry.nitecon.net
-- **Image**: udp-director
+- ✅ Automated testing before build
+- ✅ Multi-platform support (amd64)
+- ✅ Build caching for faster builds
+- ✅ SBOM and provenance generation
+- ✅ Automatic tagging based on git tags
+
+## Configuration Summary
+
+- **Registry**: Docker Hub (docker.io)
+- **Repository**: nitecon/udp-director
 - **Default Tag**: latest
 - **Pull Policy**: Always
-- **Authentication**: Configure if required
-- **Purpose**: Testing and development
+- **Authentication**: Public (no auth required for pull)
+- **Automated Builds**: Yes (GitHub Actions)
+- **Status**: Production
+
+## Quick Reference
+
+```bash
+# Pull latest
+docker pull nitecon/udp-director:latest
+
+# Pull specific version
+docker pull nitecon/udp-director:1.0.0
+
+# Run locally
+docker run -p 9000:9000 -p 7777:7777/udp -p 9090:9090 \
+  -v $(pwd)/config.yaml:/etc/udp-director/config.yaml \
+  nitecon/udp-director:latest
+
+# Deploy to Kubernetes
+kubectl set image deployment/udp-director \
+  udp-director=nitecon/udp-director:latest \
+  -n udp-director
+```
 
 ---
 
-For questions or issues with the registry, contact your infrastructure team.
+For questions or issues, open an issue on GitHub.

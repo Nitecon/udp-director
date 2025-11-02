@@ -14,7 +14,7 @@ mod token_cache;
 
 use config::Config;
 use k8s_client::K8sClient;
-use proxy::DataProxy;
+use proxy::{DataProxy, DefaultEndpointCacheHandle};
 use query_server::QueryServer;
 use resource_monitor::ResourceMonitor;
 use session::SessionManager;
@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     // Initialize shared state
     let token_cache = TokenCache::new(config.token_ttl_seconds);
     let session_manager = SessionManager::new(config.session_timeout_seconds);
+    let default_endpoint_cache = DefaultEndpointCacheHandle::new();
 
     // Start config watcher
     let config_handle = {
@@ -91,6 +92,7 @@ async fn main() -> Result<()> {
             session_manager.clone(),
             config.clone(),
             k8s_client.clone(),
+            default_endpoint_cache.clone(),
         );
         tokio::spawn(async move {
             if let Err(e) = data_proxy.run().await {
@@ -106,6 +108,7 @@ async fn main() -> Result<()> {
             k8s_client.clone(),
             session_manager.clone(),
             10, // Check every 10 seconds
+            default_endpoint_cache.clone(),
         );
         tokio::spawn(async move {
             if let Err(e) = resource_monitor.run().await {

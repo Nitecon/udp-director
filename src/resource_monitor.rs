@@ -6,6 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::k8s_client::{K8sClient, StatusQuery};
+use crate::proxy::DefaultEndpointCacheHandle;
 use crate::session::SessionManager;
 
 /// Resource monitor that watches for changes to default endpoint and active sessions
@@ -15,6 +16,7 @@ pub struct ResourceMonitor {
     session_manager: SessionManager,
     check_interval_seconds: u64,
     last_default_endpoint: Arc<tokio::sync::RwLock<Option<String>>>,
+    cache_handle: DefaultEndpointCacheHandle,
 }
 
 impl ResourceMonitor {
@@ -24,6 +26,7 @@ impl ResourceMonitor {
         k8s_client: K8sClient,
         session_manager: SessionManager,
         check_interval_seconds: u64,
+        cache_handle: DefaultEndpointCacheHandle,
     ) -> Self {
         Self {
             config,
@@ -31,6 +34,7 @@ impl ResourceMonitor {
             session_manager,
             check_interval_seconds,
             last_default_endpoint: Arc::new(tokio::sync::RwLock::new(None)),
+            cache_handle,
         }
     }
 
@@ -136,27 +140,33 @@ impl ResourceMonitor {
                 debug!("Default endpoint check: still no matching resources");
             }
             (Some(last), None) => {
-                // Resources disappeared
+                // Resources disappeared - invalidate cache
                 warn!("⚠️  Default endpoint lost! Previous: {}", last);
                 warn!(
                     "No matching resources found for default endpoint (type: {}, namespace: {})",
                     default_endpoint.resource_type, default_endpoint.namespace
                 );
+                self.cache_handle.invalidate().await;
+                info!("Invalidated default endpoint cache");
                 *last_endpoint = None;
             }
             (None, Some(current)) => {
-                // Resources appeared
+                // Resources appeared - invalidate cache to force refresh
                 info!("✓ Default endpoint found: {}", current);
                 info!(
                     "Default endpoint now available ({} resource(s) match)",
                     resources.len()
                 );
+                self.cache_handle.invalidate().await;
+                info!("Invalidated default endpoint cache to force refresh");
                 *last_endpoint = current_target;
             }
             (Some(last), Some(current)) => {
                 if last != current {
-                    // Resources changed
+                    // Resources changed - invalidate cache to force refresh
                     info!("🔄 Default endpoint changed: {} → {}", last, current);
+                    self.cache_handle.invalidate().await;
+                    info!("Invalidated default endpoint cache to force refresh");
                     *last_endpoint = current_target;
                 } else {
                     // No change
@@ -220,8 +230,9 @@ mod tests {
 
         let k8s_client = K8sClient::new().await.unwrap();
         let session_manager = crate::session::SessionManager::new(300);
+        let cache_handle = DefaultEndpointCacheHandle::new();
 
-        let _monitor = ResourceMonitor::new(config, k8s_client, session_manager, 10);
+        let _monitor = ResourceMonitor::new(config, k8s_client, session_manager, 10, cache_handle);
         // Just verify it can be created
     }
 }

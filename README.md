@@ -1,6 +1,7 @@
 # UDP Director
 
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange)](https://www.rust-lang.org/)
+[![Docker](https://img.shields.io/docker/v/nitecon/udp-director?label=Docker%20Hub)](https://hub.docker.com/r/nitecon/udp-director)
 [![License](https://img.shields.io/badge/License-TBD-blue)]()
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-green)]()
 
@@ -57,20 +58,17 @@ UDP Director uses a three-phase flow:
 
 ### Prerequisites
 
-- Rust 2024 Edition (stable via `rustup`)
 - Kubernetes cluster with Cilium CNI
-- Docker for building images
 - `kubectl` configured
 
 ### Deploy to Kubernetes
 
+The latest images are automatically published to Docker Hub at `nitecon/udp-director`.
+
 ```bash
-# Clone repository
+# Clone repository for K8s manifests
 git clone <repository-url>
 cd udp-director
-
-# Build and push to registry
-./dockerpush.sh
 
 # Deploy
 kubectl apply -f k8s/rbac.yaml
@@ -83,6 +81,18 @@ kubectl apply -f k8s/deployment.yaml
 # Verify
 kubectl get pods -n udp-director
 kubectl logs -n udp-director -l app=udp-director -f
+```
+
+### Using Specific Versions
+
+```bash
+# Use a specific version tag
+kubectl set image deployment/udp-director \
+  udp-director=nitecon/udp-director:1.0.0 \
+  -n udp-director
+
+# Or edit deployment.yaml before applying
+# image: nitecon/udp-director:1.0.0
 ```
 
 ### Client Integration Example
@@ -168,6 +178,8 @@ Edit the chosen ConfigMap to customize for your environment.
 
 ## Development
 
+### Local Development
+
 ```bash
 # Format and lint
 cargo fmt
@@ -182,6 +194,15 @@ cargo build --release
 # Or use make
 make help
 ```
+
+### Docker Images
+
+Images are automatically built and pushed to Docker Hub via GitHub Actions:
+
+- **Latest**: `nitecon/udp-director:latest` (on every push to `main`)
+- **Tagged**: `nitecon/udp-director:1.0.0` (on version tags like `v1.0.0`)
+
+See [Docker Registry Setup](Docs/DockerRegistry.md) for more details.
 
 ## Technology Stack
 

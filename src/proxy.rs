@@ -12,7 +12,7 @@ use crate::token_cache::TokenCache;
 
 /// Cached default endpoint target
 #[derive(Clone, Debug)]
-struct DefaultEndpointCache {
+pub(crate) struct DefaultEndpointCache {
     address: String,
     port: u16,
 }
@@ -27,6 +27,32 @@ pub struct DataProxy {
     default_endpoint_cache: Arc<RwLock<Option<DefaultEndpointCache>>>,
 }
 
+/// Shared cache for default endpoint that can be invalidated
+#[derive(Clone)]
+pub struct DefaultEndpointCacheHandle {
+    cache: Arc<RwLock<Option<DefaultEndpointCache>>>,
+}
+
+impl DefaultEndpointCacheHandle {
+    /// Create a new cache handle
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Invalidate the cache
+    pub async fn invalidate(&self) {
+        let mut cache = self.cache.write().await;
+        *cache = None;
+    }
+
+    /// Get the cache
+    pub fn get_cache(&self) -> Arc<RwLock<Option<DefaultEndpointCache>>> {
+        self.cache.clone()
+    }
+}
+
 impl DataProxy {
     /// Create a new data proxy
     pub fn new(
@@ -35,6 +61,7 @@ impl DataProxy {
         session_manager: SessionManager,
         config: Config,
         k8s_client: K8sClient,
+        cache_handle: DefaultEndpointCacheHandle,
     ) -> Self {
         Self {
             port,
@@ -42,7 +69,7 @@ impl DataProxy {
             session_manager,
             config,
             k8s_client,
-            default_endpoint_cache: Arc::new(RwLock::new(None)),
+            default_endpoint_cache: cache_handle.get_cache(),
         }
     }
 
