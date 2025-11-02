@@ -163,10 +163,7 @@ impl K8sClient {
                         if let Some(Value::String(entry_type)) = addr_entry.get("type") {
                             if entry_type == addr_type {
                                 if let Some(Value::String(address)) = addr_entry.get("address") {
-                                    debug!(
-                                        "Found address of type '{}': {}",
-                                        addr_type, address
-                                    );
+                                    debug!("Found address of type '{}': {}", addr_type, address);
                                     return Ok(address.to_string());
                                 }
                             }

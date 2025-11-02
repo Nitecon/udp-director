@@ -113,7 +113,11 @@ impl ResourceMonitor {
 
             // Try to extract address and port
             if let Some(address_path) = &mapping.address_path {
-                match self.k8s_client.extract_address(resource, address_path, mapping.address_type.as_deref()) {
+                match self.k8s_client.extract_address(
+                    resource,
+                    address_path,
+                    mapping.address_type.as_deref(),
+                ) {
                     Ok(address) => {
                         match self.k8s_client.extract_port(
                             resource,
