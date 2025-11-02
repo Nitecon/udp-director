@@ -24,7 +24,7 @@ data:
     # Uses the same query structure as client queries for consistency
     defaultEndpoint:
       resourceType: "gameserver"
-      namespace: "default"
+      namespace: "starx"
       labelSelector:
         agones.dev/fleet: "m-tutorial"
       statusQuery:

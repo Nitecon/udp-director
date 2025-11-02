@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
     let k8s_client = K8sClient::new().await?;
     info!("Kubernetes client initialized");
 
+    // Verify default endpoint configuration
+    verify_default_endpoint(&config, &k8s_client).await;
+
     // Initialize shared state
     let token_cache = TokenCache::new(config.token_ttl_seconds);
     let session_manager = SessionManager::new(config.session_timeout_seconds);
@@ -94,4 +97,121 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Verify and display the default endpoint configuration
+async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
+    use tracing::error;
+
+    let default_endpoint = config.get_default_endpoint();
+
+    info!("=== Default Endpoint Configuration ===");
+    info!("  Resource Type: {}", default_endpoint.resource_type);
+    info!("  Namespace: {}", default_endpoint.namespace);
+
+    if let Some(labels) = &default_endpoint.label_selector {
+        info!("  Label Selector:");
+        for (key, value) in labels {
+            info!("    {} = {}", key, value);
+        }
+    }
+
+    if let Some(status_query) = &default_endpoint.status_query {
+        info!("  Status Query:");
+        info!("    JSONPath: {}", status_query.json_path);
+        info!("    Expected Value: {}", status_query.expected_value);
+    }
+
+    // Try to resolve the default endpoint
+    match config
+        .resource_query_mapping
+        .get(&default_endpoint.resource_type)
+    {
+        Some(mapping) => {
+            info!("  Resource Mapping Found:");
+            info!("    Group: {}", mapping.group);
+            info!("    Version: {}", mapping.version);
+            info!("    Resource: {}", mapping.resource);
+
+            // Convert status query
+            let status_query =
+                default_endpoint
+                    .status_query
+                    .as_ref()
+                    .map(|sq| k8s_client::StatusQuery {
+                        json_path: sq.json_path.clone(),
+                        expected_value: sq.expected_value.clone(),
+                    });
+
+            // Query for matching resources
+            match k8s_client
+                .query_resources(
+                    &default_endpoint.namespace,
+                    mapping,
+                    status_query.as_ref(),
+                    default_endpoint.label_selector.as_ref(),
+                )
+                .await
+            {
+                Ok(resources) => {
+                    if resources.is_empty() {
+                        warn!("  ⚠️  No matching resources found for default endpoint!");
+                        warn!("  Clients without tokens will fail to connect.");
+                    } else {
+                        info!("  ✓ Found {} matching resource(s)", resources.len());
+
+                        // Display the first matching resource
+                        if let Some(resource) = resources.first() {
+                            let resource_name =
+                                resource.metadata.name.as_deref().unwrap_or("unknown");
+
+                            info!("  Selected Resource: {}", resource_name);
+
+                            // Try to extract address and port
+                            if let Some(address_path) = &mapping.address_path {
+                                match k8s_client.extract_address(resource, address_path) {
+                                    Ok(address) => {
+                                        match k8s_client.extract_port(
+                                            resource,
+                                            mapping.port_path.as_deref(),
+                                            mapping.port_name.as_deref(),
+                                        ) {
+                                            Ok(port) => {
+                                                info!("  Default Target: {}:{}", address, port);
+                                            }
+                                            Err(e) => {
+                                                error!("  ✗ Failed to extract port: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("  ✗ Failed to extract address: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("  ✗ Failed to query default endpoint resources: {}", e);
+                    error!("  Namespace: {}", default_endpoint.namespace);
+                    error!(
+                        "  Resource: {}/{}/{}",
+                        mapping.group, mapping.version, mapping.resource
+                    );
+                    error!("  This may be a permissions issue. Check RBAC configuration.");
+                    error!("  Clients without tokens will fail to connect.");
+                }
+            }
+        }
+        None => {
+            error!(
+                "  ✗ Resource type '{}' not found in resourceQueryMapping!",
+                default_endpoint.resource_type
+            );
+            error!("  Default endpoint is misconfigured!");
+        }
+    }
+
+    info!("======================================");
 }
