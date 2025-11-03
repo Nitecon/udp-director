@@ -242,9 +242,7 @@ impl Config {
 
     /// Get the load balancing configuration (or default)
     pub fn get_load_balancing(&self) -> LoadBalancingConfig {
-        self.load_balancing
-            .clone()
-            .unwrap_or_else(LoadBalancingConfig::default)
+        self.load_balancing.clone().unwrap_or_default()
     }
 
     /// Get the decoded magic bytes

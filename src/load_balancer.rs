@@ -8,10 +8,11 @@ use tracing::{debug, info, warn};
 use crate::k8s_client::K8sClient;
 
 /// Load balancing strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LoadBalancingStrategy {
     /// Least sessions - route to the backend with the fewest active sessions
+    #[default]
     LeastSessions,
     /// Label-based arithmetic - evaluate expressions on resource labels
     LabelArithmetic {
@@ -23,12 +24,6 @@ pub enum LoadBalancingStrategy {
         #[serde(default)]
         overlap: i64,
     },
-}
-
-impl Default for LoadBalancingStrategy {
-    fn default() -> Self {
-        LoadBalancingStrategy::LeastSessions
-    }
 }
 
 /// Load balancing configuration
@@ -49,6 +44,7 @@ impl Default for LoadBalancingConfig {
 }
 
 /// Backend resource information
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Resource name
@@ -334,6 +330,7 @@ impl LoadBalancer {
     }
 
     /// Get session count for a backend
+    #[allow(dead_code)]
     pub fn get_session_count(&self, backend_address: &str) -> usize {
         self.session_counts
             .get(backend_address)
@@ -342,17 +339,20 @@ impl LoadBalancer {
     }
 
     /// Get total session count across all backends
+    #[allow(dead_code)]
     pub fn get_total_sessions(&self) -> usize {
         self.session_counts.iter().map(|entry| *entry.value()).sum()
     }
 
     /// Clear session count for a backend (used when backend is removed)
+    #[allow(dead_code)]
     pub fn clear_backend(&self, backend_address: &str) {
         self.session_counts.remove(backend_address);
         debug!("Cleared session count for backend {}", backend_address);
     }
 
     /// Get all backend addresses and their session counts
+    #[allow(dead_code)]
     pub fn get_all_session_counts(&self) -> Vec<(String, usize)> {
         self.session_counts
             .iter()
@@ -382,9 +382,11 @@ mod tests {
         address: &str,
         labels: HashMap<String, String>,
     ) -> DynamicObject {
-        let mut metadata = kube::api::ObjectMeta::default();
-        metadata.name = Some(name.to_string());
-        metadata.labels = Some(labels.into_iter().collect());
+        let metadata = kube::api::ObjectMeta {
+            name: Some(name.to_string()),
+            labels: Some(labels.into_iter().collect()),
+            ..Default::default()
+        };
 
         let data = json!({
             "apiVersion": "v1",
