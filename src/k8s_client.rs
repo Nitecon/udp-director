@@ -134,10 +134,10 @@ impl K8sClient {
             if let Some(bracket_pos) = part.find('[') {
                 let field_name = &part[..bracket_pos];
                 let index_str = &part[bracket_pos + 1..part.len() - 1]; // Extract index between [ and ]
-                
+
                 // Get the field (which should be an array)
                 current = current.get(field_name)?;
-                
+
                 // Parse the index and get the array element
                 if let Ok(index) = index_str.parse::<usize>() {
                     current = current.get(index)?;
@@ -244,8 +244,13 @@ impl K8sClient {
                             for port in ports {
                                 if let Some(Value::String(port_name_val)) = port.get("name") {
                                     if port_name_val == name {
-                                        if let Some(Value::Number(port_num)) = port.get("containerPort") {
-                                            debug!("Found port '{}' in spec.containers[].ports: {}", name, port_num);
+                                        if let Some(Value::Number(port_num)) =
+                                            port.get("containerPort")
+                                        {
+                                            debug!(
+                                                "Found port '{}' in spec.containers[].ports: {}",
+                                                name, port_num
+                                            );
                                             return port_num
                                                 .as_u64()
                                                 .and_then(|n| u16::try_from(n).ok())
@@ -490,10 +495,22 @@ mod tests {
         assert_eq!(port, 7777);
 
         // Test port extraction by path
-        let port = client.extract_port(&pod, Some("spec.containers[0].ports[0].containerPort"), None).unwrap();
+        let port = client
+            .extract_port(
+                &pod,
+                Some("spec.containers[0].ports[0].containerPort"),
+                None,
+            )
+            .unwrap();
         assert_eq!(port, 7777);
 
-        let port = client.extract_port(&pod, Some("spec.containers[0].ports[1].containerPort"), None).unwrap();
+        let port = client
+            .extract_port(
+                &pod,
+                Some("spec.containers[0].ports[1].containerPort"),
+                None,
+            )
+            .unwrap();
         assert_eq!(port, 7777);
 
         // Test non-existent port name
