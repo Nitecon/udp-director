@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Metrics Documentation
 
 UDP Director exposes Prometheus-compatible metrics for monitoring and observability.
@@ -354,3 +356,5 @@ kubectl port-forward -n monitoring prometheus-0 9090:9090
 - [ ] Add geographic distribution metrics (if applicable)
 - [ ] Add SLO/SLI tracking metrics
 - [ ] Add custom business metrics (e.g., game-specific events)
+
+[← Back to README](../README.md)

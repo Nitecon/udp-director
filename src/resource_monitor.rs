@@ -100,6 +100,7 @@ impl ResourceMonitor {
                 mapping,
                 status_query.as_ref(),
                 default_endpoint.label_selector.as_ref(),
+                default_endpoint.annotation_selector.as_ref(),
             )
             .await?;
 
@@ -225,6 +226,7 @@ mod tests {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),
                 label_selector: None,
+                annotation_selector: None,
                 status_query: None,
             },
             token_ttl_seconds: 30,

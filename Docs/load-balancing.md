@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Load Balancing
 
 UDP Director supports intelligent load balancing to distribute client connections across a pool of backend resources (pods, game servers, etc.).
@@ -91,6 +93,11 @@ With `overlap: 2`:
 - Server C: Available capacity = -1 (not eligible, at capacity)
 
 New connections will be routed to Server B.
+
+## Related Documentation
+
+- [Configuration Reference](TechnicalReference.md) - Complete configuration options
+- [Multi-Port Support](MultiPortSupport.md) - Multi-port routing configuration
 
 ## Configuration
 

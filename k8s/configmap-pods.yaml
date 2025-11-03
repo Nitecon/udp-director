@@ -6,7 +6,7 @@ metadata:
 data:
   config.yaml: |
     # UDP Director Configuration - Single Port Pod Routing
-    # This example routes to pods using a single UDP port
+    # Simple single-port routing with label and annotation filtering
     
     queryPort: 9000
     dataPort: 7777
@@ -18,9 +18,18 @@ data:
     defaultEndpoint:
       resourceType: "starx-pod"
       namespace: "starx"
+      
+      # Labels: Static configuration (server-side filtering)
       labelSelector:
         app: "starx-test"
         map: "m-tutorial"
+      
+      # Annotations: Dynamic operational data (client-side filtering)
+      # Uncomment to filter by dynamic values
+      # annotationSelector:
+      #   currentLoad: "medium"
+      #   healthStatus: "healthy"
+      
       statusQuery:
         jsonPath: "status.phase"
         expectedValues:

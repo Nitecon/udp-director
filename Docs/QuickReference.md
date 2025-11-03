@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # UDP Director - Quick Reference Card
 
 ## 🚀 Quick Commands
@@ -47,14 +49,20 @@ make k8s-delete
 **Request**:
 ```json
 {
+  "type": "query",
   "resourceType": "gameserver",
   "namespace": "game-servers",
+  "labelSelector": {
+    "agones.dev/fleet": "my-fleet",
+    "map": "de_dust2"
+  },
+  "annotationSelector": {
+    "currentPlayers": "32",
+    "status": "available"
+  },
   "statusQuery": {
     "jsonPath": "status.state",
-    "expectedValue": "Allocated"
-  },
-  "labelSelector": {
-    "game.example.com/map": "de_dust2"
+    "expectedValues": ["Ready", "Allocated"]
   }
 }
 ```
@@ -93,18 +101,32 @@ make k8s-delete
 ```yaml
 queryPort: 9000                    # TCP query port
 dataPort: 7777                     # UDP data port
-defaultEndpoint: "service.ns:port" # Fallback endpoint
 tokenTTLSeconds: 30                # Token validity
 sessionTimeoutSeconds: 300         # Session timeout
 controlPacketMagicBytes: "FFFFFFFF5245534554" # Magic bytes (hex)
+
+defaultEndpoint:
+  resourceType: "gameserver"
+  namespace: "default"
+  # Labels: Static config (server-side filtering)
+  labelSelector:
+    agones.dev/fleet: "my-fleet"
+    map: "de_dust2"
+  # Annotations: Dynamic data (client-side filtering)
+  annotationSelector:
+    currentPlayers: "32"
+    status: "available"
+  statusQuery:
+    jsonPath: "status.state"
+    expectedValues: ["Ready"]
 
 resourceQueryMapping:
   gameserver:
     group: "agones.dev"
     version: "v1"
     resource: "gameservers"
-    serviceSelectorLabel: "agones.dev/gameserver"
-    serviceTargetPortName: "default"
+    addressPath: "status.address"
+    portName: "default"
 ```
 
 ---
@@ -264,12 +286,14 @@ socket.send(&packet)?;
 
 ## 📚 Documentation Links
 
-- **Technical Reference**: `Docs/TECHNICAL_REFERENCE.md`
+- **Technical Reference**: `Docs/TechnicalReference.md`
 - **Coding Guidelines**: `Docs/CodingGuidelines.md`
-- **Testing Guide**: `Docs/TESTING.md`
-- **Project Summary**: `Docs/PROJECT_SUMMARY.md`
-- **Quick Reference**: `Docs/QUICK_REFERENCE.md`
+- **Testing Guide**: `Docs/Testing.md`
+- **Project Summary**: `Docs/ProjectSummary.md`
+- **Quick Reference**: `Docs/QuickReference.md`
 - **Example Client**: `examples/client_example.rs`
+
+[← Back to README](../README.md)
 
 ---
 

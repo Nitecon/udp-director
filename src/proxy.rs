@@ -415,6 +415,7 @@ impl DataProxy {
                 mapping,
                 status_query.as_ref(),
                 default_endpoint.label_selector.as_ref(),
+                default_endpoint.annotation_selector.as_ref(),
             )
             .await?;
 

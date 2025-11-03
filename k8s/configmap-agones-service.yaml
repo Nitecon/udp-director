@@ -19,8 +19,16 @@ data:
     defaultEndpoint:
       resourceType: "gameserver"
       namespace: "default"
+      
+      # Labels: Static configuration (server-side filtering)
       labelSelector:
         agones.dev/fleet: "my-fleet"
+      
+      # Annotations: Dynamic operational data (client-side filtering)
+      # Uncomment to filter by dynamic values
+      # annotationSelector:
+      #   playerCount: "50"
+      
       statusQuery:
         jsonPath: "status.state"
         expectedValues:

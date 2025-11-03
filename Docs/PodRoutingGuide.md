@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Pod-Based Routing Guide
 
 This guide explains how to configure UDP Director to route traffic directly to Kubernetes pods, bypassing services entirely.
@@ -398,5 +400,7 @@ Ensure network policies allow:
 
 - [configmap-pods.yaml](../k8s/configmap-pods.yaml) - Full ConfigMap example
 - [example-pod-deployment.yaml](../k8s/example-pod-deployment.yaml) - Complete deployment example
-- [Technical Reference](TechnicalReference.md) - Advanced configuration
-- [k8s.md](../k8s/k8s.md) - Kubernetes deployment guide
+- [Multi-Port Support](MultiPortSupport.md) - Configure multiple ports per pod
+- [Technical Reference](TechnicalReference.md) - Advanced configuration options
+
+[← Back to README](../README.md)

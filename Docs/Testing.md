@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Testing Guide for UDP Director
 
 This document describes how to test the UDP Director locally and in a Kubernetes environment.
@@ -232,6 +234,13 @@ kubectl logs -n udp-director -l app=udp-director -f
 # View logs with debug level
 kubectl set env deployment/udp-director -n udp-director RUST_LOG=udp_director=debug
 ```
+
+Enable verbose logging:
+```bash
+RUST_LOG=udp_director=debug cargo run
+```
+
+[← Back to README](../README.md)
 
 ### Check Session State
 

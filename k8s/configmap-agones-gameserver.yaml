@@ -7,6 +7,7 @@ data:
   config.yaml: |
     # UDP Director Configuration - Agones GameServer
     # This example routes to Agones GameServer resources
+    # Demonstrates both label and annotation filtering
     
     queryPort: 9000
     dataPort: 7777
@@ -18,8 +19,19 @@ data:
     defaultEndpoint:
       resourceType: "gameserver"
       namespace: "default"
+      
+      # Labels: Static configuration (server-side filtering)
       labelSelector:
         agones.dev/fleet: "my-fleet"
+        map: "de_dust2"
+      
+      # Annotations: Dynamic operational data (client-side filtering)
+      # Uncomment to filter by current player count or other dynamic values
+      # annotationSelector:
+      #   currentPlayers: "32"
+      #   status: "available"
+      
+      # Status: Filter by resource status
       statusQuery:
         jsonPath: "status.state"
         expectedValues:

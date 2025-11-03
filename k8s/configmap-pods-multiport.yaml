@@ -6,15 +6,15 @@ metadata:
 data:
   config.yaml: |
     # UDP Director Configuration - Multi-Port Pod Routing
-    # This example demonstrates Approach 2: Port Mapping in Token
-    # A single token provides access to multiple ports
+    # Single token provides access to multiple ports
+    # Demonstrates label and annotation filtering
     
     queryPort: 9000
     tokenTtlSeconds: 30
     sessionTimeoutSeconds: 300
     controlPacketMagicBytes: "FFFFFFFF5245534554"
 
-    # Multi-port configuration (UDP only - TCP support not yet implemented)
+    # Multi-port configuration
     dataPorts:
       - port: 7777
         protocol: "udp"
@@ -27,9 +27,18 @@ data:
     defaultEndpoint:
       resourceType: "starx-pod"
       namespace: "starx"
+      
+      # Labels: Static configuration (server-side filtering)
       labelSelector:
         app: "starx-test"
         map: "m-tutorial"
+      
+      # Annotations: Dynamic operational data (client-side filtering)
+      # Uncomment to filter by dynamic values
+      # annotationSelector:
+      #   loadPercentage: "75"
+      #   status: "accepting-players"
+      
       statusQuery:
         jsonPath: "status.phase"
         expectedValues:

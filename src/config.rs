@@ -80,6 +80,11 @@ pub struct DefaultEndpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_selector: Option<HashMap<String, String>>,
 
+    /// Annotation selector for filtering resources (client-side filtering)
+    /// Use for dynamic/operational data like currentPlayers, playerList, etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotation_selector: Option<HashMap<String, String>>,
+
     /// Status query for filtering resources
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_query: Option<StatusQueryConfig>,
@@ -270,6 +275,7 @@ mod tests {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),
                 label_selector: Some(label_selector),
+                annotation_selector: None,
                 status_query: Some(StatusQueryConfig {
                     json_path: "status.state".to_string(),
                     expected_values: vec!["Ready".to_string()],
@@ -300,6 +306,7 @@ mod tests {
                 resource_type: "gameserver".to_string(),
                 namespace: "starx".to_string(),
                 label_selector: Some(label_selector),
+                annotation_selector: None,
                 status_query: None, // No status filtering
             },
             token_ttl_seconds: 30,
@@ -325,6 +332,7 @@ mod tests {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),
                 label_selector: None,
+                annotation_selector: None,
                 status_query: None,
             },
             token_ttl_seconds: 30,

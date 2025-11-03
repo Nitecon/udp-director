@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udp-director-config
+  namespace: game-servers
+data:
+  config.yaml: |
+    # UDP Director Configuration - Advanced Annotation Filtering
+    # This example demonstrates dynamic filtering using annotations
+    # with label-based arithmetic load balancing
+    
+    queryPort: 9000
+    dataPort: 7777
+    tokenTtlSeconds: 30
+    sessionTimeoutSeconds: 300
+    controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+    # Default endpoint with annotation-based filtering
+    defaultEndpoint:
+      resourceType: "gameserver"
+      namespace: "game-servers"
+      
+      # Labels: Static server configuration (server-side filtering)
+      # These are indexed by Kubernetes for fast queries
+      labelSelector:
+        agones.dev/fleet: "competitive-fleet"
+        map: "de_dust2"
+        maxPlayers: "64"
+        tier: "premium"
+      
+      # Annotations: Dynamic operational data (client-side filtering)
+      # Filter by current player count and server status
+      annotationSelector:
+        status: "accepting-players"
+        region: "us-east"
+        # Note: Exact match only - for range queries, use load balancing
+      
+      # Status: Filter by GameServer state
+      statusQuery:
+        jsonPath: "status.state"
+        expectedValues:
+          - "Ready"
+          - "Allocated"
+
+    # Load balancing with label-based arithmetic
+    # Uses labels for capacity calculation
+    loadBalancing:
+      type: "labelArithmetic"
+      currentLabel: "currentPlayers"  # Dynamic player count (from label)
+      maxLabel: "maxPlayers"          # Max capacity (from label)
+      overlap: 2                       # Allow 2 concurrent connections
+
+    # Resource query mapping for Agones GameServers
+    resourceQueryMapping:
+      gameserver:
+        group: "agones.dev"
+        version: "v1"
+        resource: "gameservers"
+        addressPath: "status.address"
+        portName: "default"

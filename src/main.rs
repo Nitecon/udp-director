@@ -209,6 +209,7 @@ async fn verify_default_endpoint(config: &Config, k8s_client: &K8sClient) {
             mapping,
             status_query.as_ref(),
             default_endpoint.label_selector.as_ref(),
+            default_endpoint.annotation_selector.as_ref(),
         )
         .await
     {

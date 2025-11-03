@@ -9,9 +9,11 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 
 ## Quick Links
 
-- **[Migration Guide](MIGRATION.md)** - v0.2.0 architectural changes and upgrade guide
 - **[Load Balancing](Docs/load-balancing.md)** - Load balancing strategies and configuration
+- **[Annotation Support](Docs/AnnotationSupport.md)** - Filter by labels and annotations (best practices)
 - **[Technical Reference](Docs/TechnicalReference.md)** - Complete deployment and technical guide
+- **[Multi-Port Support](Docs/MultiPortSupport.md)** - Multi-port configuration guide
+- **[Pod Routing Guide](Docs/PodRoutingGuide.md)** - Pod-based routing configuration
 - **[Metrics Documentation](Docs/Metrics.md)** - Prometheus metrics and monitoring
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
 - **[Testing Guide](Docs/Testing.md)** - Unit, integration, and load testing
@@ -145,7 +147,7 @@ echo -n -e "\xFF\xFF\xFF\xFF\x52\x45\x53\x45\x54${NEW_TOKEN}" | nc -u <LoadBalan
 - All data packets are forwarded immediately
 - Works with standard TCP/UDP clients
 
-See [Technical Reference](Docs/TECHNICAL_REFERENCE.md) and [Testing Guide](Docs/TESTING.md) for complete examples.
+See [Technical Reference](Docs/TechnicalReference.md) and [Testing Guide](Docs/Testing.md) for complete examples.
 
 ## Architecture
 
@@ -246,18 +248,6 @@ cargo build --release
 make help
 ```
 
-### Automated Builds
-
-Docker images are automatically built and published via GitHub Actions when:
-- **Push to `main`**: Updates `nitecon/udp-director:latest`
-- **Version tags** (e.g., `v1.0.0`): Creates `nitecon/udp-director:v1.0.0`
-
-To trigger a release:
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
 ## Technology Stack
 
 - **Language**: Rust 2024 Edition
@@ -278,19 +268,3 @@ git push origin v1.0.0
 ## License
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
-
----
-
-**Version**: 0.2.0  
-**Status**: Production Ready  
-**Target**: Cilium Service Mesh on Kubernetes
-
-## What's New in v0.2.0
-
-- ✅ **True Layer 3 Load Balancing**: Sessions established via query port
-- ✅ **Full TCP Support**: TCP and UDP protocols on data ports
-- ✅ **No Packet Loss**: All data packets forwarded immediately
-- ✅ **Simplified Client Integration**: No need to send token as first packet
-- ✅ **Better Performance**: Reduced latency, no first packet inspection
-
-See [MIGRATION.md](MIGRATION.md) for complete details.

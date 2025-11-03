@@ -219,6 +219,48 @@ statusQuery:
 - Exact string match only
 - For complex queries, use label selectors instead
 
+### Label and Annotation Filtering
+
+UDP Director supports both **labels** and **annotations** following Kubernetes best practices:
+
+**Labels** (Server-Side Filtering):
+- Static/identifying metadata (e.g., `maxPlayers`, `map`, `tier`)
+- Indexed by Kubernetes for fast queries
+- Applied server-side before resources are retrieved
+- Use for primary filtering criteria
+
+```yaml
+labelSelector:
+  agones.dev/fleet: "my-fleet"
+  map: "de_dust2"
+  maxPlayers: "64"
+```
+
+**Annotations** (Client-Side Filtering):
+- Dynamic/operational data (e.g., `currentPlayers`, `status`, `lastUpdated`)
+- Not indexed, filtered after retrieval
+- Use for fine-grained selection on dynamic values
+- Supports larger values and frequently changing data
+
+```yaml
+annotationSelector:
+  currentPlayers: "32"
+  status: "accepting-players"
+  region: "us-east"
+```
+
+**Filtering Order**:
+1. Label selector (server-side, most efficient)
+2. Status query (client-side JSONPath)
+3. Annotation selector (client-side exact match)
+4. Load balancer selection (if configured)
+
+**Best Practices**:
+- Use labels for static configuration that doesn't change
+- Use annotations for dynamic operational data
+- Start with labels to reduce the resource set, then use annotations for fine-tuning
+- See [Annotation Support](AnnotationSupport.md) for detailed examples
+
 ### Service Discovery
 
 **Requirements**:
@@ -399,35 +441,31 @@ spec:
 
 ### ConfigMap Selection
 
-UDP Director provides four pre-configured ConfigMaps for common use cases:
+UDP Director provides pre-configured ConfigMaps for common use cases:
 
-**`k8s/configmap-agones-gameserver.yaml`** - Agones Direct Resource Inspection (Recommended)
+**`k8s/configmap-agones-gameserver.yaml`** - Agones GameServer (Recommended)
+- Direct resource inspection with label and annotation filtering
 - Extracts address and port directly from GameServer status
-- No service discovery needed - simpler and faster
-- Supports label and status filtering
+- Demonstrates both static (labels) and dynamic (annotations) filtering
 - Default data port: 7777
-- Example query: `{"resourceType": "gameserver", "namespace": "starx", "labelSelector": {"agones.dev/fleet": "m-tutorial"}}`
 
-**`k8s/configmap-agones-service.yaml`** - Agones Service-Based Routing
+**`k8s/configmap-pods-multiport.yaml`** - Multi-Port Pod Routing
+- Single token provides access to multiple ports
+- Includes label and annotation filtering examples
+- Ideal for game servers with multiple service ports
+
+**`k8s/configmap-pods.yaml`** - Single Port Pod Routing
+- Simple single-port configuration
+- Direct pod access with label and annotation filtering
+
+**`k8s/configmap-advanced-annotations.yaml`** - Advanced Annotation Filtering
+- Demonstrates dynamic filtering with annotations
+- Combines with label-based arithmetic load balancing
+- Shows best practices for capacity-aware routing
+
+**`k8s/configmap-agones-service.yaml`** - Service-Based Routing (Legacy)
 - Routes through Kubernetes Services
-- Requires Services to be created for each GameServer
-- Demonstrates service-based discovery pattern
-- Default data port: 7777
-- Example query: `{"resourceType": "gameserver", "namespace": "starx", "labelSelector": {"agones.dev/fleet": "m-tutorial"}}`
-
-**`k8s/configmap-dns.yaml`** - DNS Service Routing
-- Uses service-based approach (Services don't have status.address)
-- Routes DNS packets (UDP port 53)
-- Targets CoreDNS or other DNS services
-- Default data port: 53
-- Example query: `{"resourceType": "dns", "namespace": "kube-system", "labelSelector": {"k8s-app": "coredns"}}`
-
-**`k8s/configmap-ntp.yaml`** - NTP Service Routing
-- Uses service-based approach (Services don't have status.address)
-- Routes NTP packets (UDP port 123)
-- Targets Chrony or other NTP services
-- Default data port: 123
-- Example query: `{"resourceType": "ntp", "namespace": "default", "labelSelector": {"app": "chrony"}}`
+- Use when direct pod access is not available
 
 Deploy only the ConfigMap you need:
 ```bash

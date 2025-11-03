@@ -35,6 +35,7 @@ impl K8sClient {
         mapping: &ResourceMapping,
         status_query: Option<&StatusQuery>,
         label_selector: Option<&HashMap<String, String>>,
+        annotation_selector: Option<&HashMap<String, String>>,
     ) -> Result<Vec<DynamicObject>> {
         // Create API resource definition
         let api_resource = ApiResource {
@@ -79,7 +80,7 @@ impl K8sClient {
         );
 
         // Filter by status query if provided
-        let filtered = if let Some(query) = status_query {
+        let mut filtered: Vec<DynamicObject> = if let Some(query) = status_query {
             resource_list
                 .items
                 .into_iter()
@@ -88,6 +89,11 @@ impl K8sClient {
         } else {
             resource_list.items
         };
+
+        // Filter by annotations if provided (client-side filtering)
+        if let Some(annotations) = annotation_selector {
+            filtered.retain(|resource| self.matches_annotation_selector(resource, annotations));
+        }
 
         debug!("After filtering: {} resources match", filtered.len());
         Ok(filtered)
@@ -121,6 +127,32 @@ impl K8sClient {
             }
             _ => false,
         }
+    }
+
+    /// Check if a resource matches the annotation selector
+    fn matches_annotation_selector(
+        &self,
+        resource: &DynamicObject,
+        selector: &HashMap<String, String>,
+    ) -> bool {
+        let annotations = match &resource.metadata.annotations {
+            Some(annot) => annot,
+            None => return false, // No annotations, doesn't match
+        };
+
+        // All selector annotations must match
+        for (key, expected_value) in selector {
+            match annotations.get(key) {
+                Some(actual_value) => {
+                    if actual_value != expected_value {
+                        return false;
+                    }
+                }
+                None => return false, // Required annotation not found
+            }
+        }
+
+        true
     }
 
     /// Extract a value from JSON using a simple JSONPath-like syntax
@@ -537,5 +569,60 @@ mod tests {
         // Test non-existent port name
         let result = client.extract_port(&pod, None, Some("non-existent"));
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_annotation_selector_matching() {
+        let client = K8sClient {
+            client: Client::try_default().await.ok().unwrap(),
+        };
+
+        // Create a resource with annotations
+        let resource_json = json!({
+            "apiVersion": "agones.dev/v1",
+            "kind": "GameServer",
+            "metadata": {
+                "name": "test-server",
+                "annotations": {
+                    "currentPlayers": "32",
+                    "maxPlayers": "64",
+                    "map": "de_dust2"
+                }
+            },
+            "status": {
+                "state": "Ready"
+            }
+        });
+
+        let resource: DynamicObject = serde_json::from_value(resource_json).unwrap();
+
+        // Test exact match
+        let mut selector = HashMap::new();
+        selector.insert("currentPlayers".to_string(), "32".to_string());
+        assert!(client.matches_annotation_selector(&resource, &selector));
+
+        // Test multiple annotations match
+        selector.insert("map".to_string(), "de_dust2".to_string());
+        assert!(client.matches_annotation_selector(&resource, &selector));
+
+        // Test annotation value mismatch
+        selector.insert("currentPlayers".to_string(), "64".to_string());
+        assert!(!client.matches_annotation_selector(&resource, &selector));
+
+        // Test missing annotation
+        let mut selector2 = HashMap::new();
+        selector2.insert("nonExistent".to_string(), "value".to_string());
+        assert!(!client.matches_annotation_selector(&resource, &selector2));
+
+        // Test resource without annotations
+        let resource_no_annot = json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "test-pod"
+            }
+        });
+        let resource_no_annot: DynamicObject = serde_json::from_value(resource_no_annot).unwrap();
+        assert!(!client.matches_annotation_selector(&resource_no_annot, &selector));
     }
 }

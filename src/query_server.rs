@@ -20,6 +20,7 @@ pub enum QueryRequest {
         namespace: String,
         status_query: Option<StatusQueryDto>,
         label_selector: Option<HashMap<String, String>>,
+        annotation_selector: Option<HashMap<String, String>>,
     },
     /// Reset an existing session with a new token
     SessionReset { token: String },
@@ -158,12 +159,14 @@ impl QueryServer {
                 namespace,
                 status_query,
                 label_selector,
+                annotation_selector,
             } => {
                 self.process_resource_query(
                     resource_type,
                     namespace,
                     status_query,
                     label_selector,
+                    annotation_selector,
                     client_addr,
                 )
                 .await
@@ -212,6 +215,7 @@ impl QueryServer {
         namespace: String,
         status_query: Option<StatusQueryDto>,
         label_selector: Option<HashMap<String, String>>,
+        annotation_selector: Option<HashMap<String, String>>,
         client_addr: std::net::SocketAddr,
     ) -> QueryResponse {
         let mapping = match self.config.resource_query_mapping.get(&resource_type) {
@@ -233,6 +237,7 @@ impl QueryServer {
                 &resource_type,
                 &namespace,
                 &label_selector,
+                &annotation_selector,
                 mapping,
                 status_query_obj.as_ref(),
             )
@@ -339,12 +344,19 @@ impl QueryServer {
         _resource_type: &str,
         namespace: &str,
         label_selector: &Option<HashMap<String, String>>,
+        annotation_selector: &Option<HashMap<String, String>>,
         mapping: &crate::config::ResourceMapping,
         status_query: Option<&StatusQuery>,
     ) -> Result<Vec<kube::api::DynamicObject>, QueryResponse> {
         let resources = self
             .k8s_client
-            .query_resources(namespace, mapping, status_query, label_selector.as_ref())
+            .query_resources(
+                namespace,
+                mapping,
+                status_query,
+                label_selector.as_ref(),
+                annotation_selector.as_ref(),
+            )
             .await
             .map_err(|e| QueryResponse::Error {
                 error: format!("Failed to query resources: {}", e),
@@ -518,6 +530,7 @@ mod tests {
                 expected_values: vec!["Allocated".to_string(), "Ready".to_string()],
             }),
             label_selector: Some(label_selector),
+            annotation_selector: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -531,6 +544,7 @@ mod tests {
                 namespace,
                 status_query,
                 label_selector,
+                annotation_selector: _,
             } => {
                 assert_eq!(resource_type, "gameserver");
                 assert_eq!(namespace, "game-servers");

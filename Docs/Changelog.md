@@ -1,9 +1,65 @@
+[← Back to README](../README.md)
+
 # Changelog
 
 All notable changes to the UDP Director project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.1] - 2025-11-03
+
+### Added - Annotation Selector Support
+
+#### Core Features
+- **Annotation Filtering** (`src/k8s_client.rs`)
+  - Added `annotationSelector` support to query system
+  - Client-side filtering for dynamic operational data
+  - Follows Kubernetes best practices: labels for static metadata, annotations for dynamic data
+  - Exact match filtering on annotation key-value pairs
+
+- **Configuration** (`src/config.rs`)
+  - Added `annotation_selector` field to `DefaultEndpoint`
+  - Optional HashMap for annotation-based filtering
+  - Fully backward compatible with existing configurations
+
+- **Query API** (`src/query_server.rs`)
+  - Extended `QueryRequest::Query` with `annotationSelector` parameter
+  - Supports filtering by both labels and annotations simultaneously
+  - Client-side filtering applied after label and status filtering
+
+#### Documentation
+- **New Guide**: `Docs/AnnotationSupport.md`
+  - Complete guide on label vs annotation usage
+  - Best practices for Kubernetes metadata
+  - Use cases and examples for game server matchmaking
+  - Performance considerations
+
+- **Updated ConfigMaps**:
+  - `k8s/configmap-agones-gameserver.yaml` - Added annotation examples
+  - `k8s/configmap-pods-multiport.yaml` - Added annotation examples
+  - `k8s/configmap-pods.yaml` - Added annotation examples
+  - `k8s/configmap-agones-service.yaml` - Added annotation examples
+  - **New**: `k8s/configmap-advanced-annotations.yaml` - Advanced filtering with load balancing
+
+- **Updated Technical Reference**:
+  - Added "Label and Annotation Filtering" section
+  - Documented filtering order and best practices
+  - Updated ConfigMap selection guide
+
+#### Testing
+- Added `test_annotation_selector_matching()` unit test
+- Tests exact match, multiple annotations, mismatches, and missing annotations
+- All 25 tests passing
+
+#### Use Cases
+- **Game Server Matchmaking**: Filter by static config (labels) and dynamic state (annotations)
+- **Capacity-Based Routing**: Use annotations for current player counts
+- **Dynamic Selection**: Filter servers by real-time operational data
+
+### Changed
+- Query system now supports three filtering mechanisms: labels, status, and annotations
+- Filtering order: labels (server-side) → status (JSONPath) → annotations (client-side)
 
 ## [0.1.0] - 2025-11-01
 
@@ -113,7 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Docker image build
 
 #### Documentation
-- **Technical Reference** (`Docs/TECHNICAL_REFERENCE.md`)
+- **Technical Reference** (`Docs/TechnicalReference.md`)
   - Complete architecture documentation
   - Configuration specification
   - Deployment instructions
@@ -135,21 +191,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Build instructions
   - Documentation links
 
-- **Testing Guide** (`TESTING.md`)
+- **Testing Guide** (`Docs/Testing.md`)
   - Unit test instructions
   - Local development setup
   - Integration testing procedures
   - Load testing examples
   - Debugging commands
 
-- **Project Summary** (`PROJECT_SUMMARY.md`)
+- **Project Summary** (`Docs/ProjectSummary.md`)
   - Implementation status checklist
   - Architecture summary
   - Key implementation details
   - Compliance with PRD
   - Next steps for deployment
 
-- **Quick Reference** (`QUICK_REFERENCE.md`)
+- **Quick Reference** (`Docs/QuickReference.md`)
   - Common commands
   - API reference
   - Configuration quick reference
@@ -264,3 +320,5 @@ Please read `Docs/CodingGuidelines.md` before contributing. All changes should:
 ## License
 
 [Add license information]
+
+[← Back to README](../README.md)
