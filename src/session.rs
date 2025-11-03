@@ -1,6 +1,6 @@
 use dashmap::DashMap;
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -46,7 +46,14 @@ impl SessionSocket {
     }
 
     /// Start a background task to receive packets from target and forward to client
-    pub fn start_receive_task(&self, client_addr: SocketAddr, proxy_socket: Arc<UdpSocket>) {
+    /// Now takes client_ip and proxy_port to look up active client ports dynamically
+    pub fn start_receive_task(
+        &self,
+        client_ip: IpAddr,
+        proxy_port: u16,
+        proxy_socket: Arc<UdpSocket>,
+        session_manager: Arc<SessionManager>,
+    ) {
         let socket = self.socket.clone();
         let shutdown = self.shutdown.clone();
 
@@ -55,7 +62,10 @@ impl SessionSocket {
             loop {
                 // Check for shutdown signal
                 if *shutdown.read().await {
-                    debug!("Receive task shutting down for client {}", client_addr);
+                    debug!(
+                        "Receive task shutting down for client {} on port {}",
+                        client_ip, proxy_port
+                    );
                     break;
                 }
 
@@ -65,19 +75,32 @@ impl SessionSocket {
                 {
                     Ok(Ok((len, target_addr))) => {
                         // Received packet from target, forward to client
-                        debug!(
-                            "Received {} bytes from target {} for client {}",
-                            len, target_addr, client_addr
-                        );
+                        // Get active client ports for this session
+                        if let Some(session) = session_manager.get(&client_ip) {
+                            if let Some(client_ports) = session.client_ports.get(&proxy_port) {
+                                for client_port in client_ports {
+                                    let client_addr = SocketAddr::new(client_ip, *client_port);
+                                    debug!(
+                                        "Received {} bytes from target {} for client {} (port {})",
+                                        len, target_addr, client_ip, client_port
+                                    );
 
-                        if let Err(e) = proxy_socket.send_to(&buffer[..len], client_addr).await {
-                            error!("Failed to forward packet to client {}: {}", client_addr, e);
+                                    if let Err(e) =
+                                        proxy_socket.send_to(&buffer[..len], client_addr).await
+                                    {
+                                        error!(
+                                            "Failed to forward packet to client {}: {}",
+                                            client_addr, e
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok(Err(e)) => {
                         error!(
                             "Error receiving from target for client {}: {}",
-                            client_addr, e
+                            client_ip, e
                         );
                         break;
                     }
@@ -87,7 +110,10 @@ impl SessionSocket {
                     }
                 }
             }
-            debug!("Receive task terminated for client {}", client_addr);
+            debug!(
+                "Receive task terminated for client {} on port {}",
+                client_ip, proxy_port
+            );
         });
     }
 }
@@ -102,6 +128,9 @@ pub struct Session {
     /// Dedicated sockets for UDP sessions (one per proxy port)
     /// Key: proxy_port -> SessionSocket
     pub udp_sockets: HashMap<u16, SessionSocket>,
+    /// Track client source ports for response routing
+    /// Key: proxy_port -> Set of client source ports seen
+    pub client_ports: HashMap<u16, HashSet<u16>>,
 }
 
 impl Session {
@@ -114,6 +143,7 @@ impl Session {
             port_mappings,
             last_activity: Instant::now(),
             udp_sockets: HashMap::new(),
+            client_ports: HashMap::new(),
         }
     }
 
@@ -124,6 +154,7 @@ impl Session {
             port_mappings,
             last_activity: Instant::now(),
             udp_sockets: HashMap::new(),
+            client_ports: HashMap::new(),
         }
     }
 
@@ -133,9 +164,18 @@ impl Session {
         proxy_port: u16,
         client_addr: SocketAddr,
         proxy_socket: Arc<UdpSocket>,
-    ) -> Result<SessionSocket, std::io::Error> {
+        session_manager: Arc<SessionManager>,
+    ) -> Result<(SessionSocket, u16), std::io::Error> {
+        // Track this client port
+        self.client_ports
+            .entry(proxy_port)
+            .or_default()
+            .insert(client_addr.port());
+
+        let client_port = client_addr.port();
+
         if let Some(session_socket) = self.udp_sockets.get(&proxy_port) {
-            return Ok(session_socket.clone());
+            return Ok((session_socket.clone(), client_port));
         }
 
         // Create new socket
@@ -143,16 +183,23 @@ impl Session {
         let local_addr = session_socket.local_addr()?;
         debug!(
             "Created dedicated socket {} for client {} on proxy port {}",
-            local_addr, client_addr, proxy_port
+            local_addr,
+            client_addr.ip(),
+            proxy_port
         );
 
-        // Start receive task
-        session_socket.start_receive_task(client_addr, proxy_socket);
+        // Start receive task - pass client IP and session manager for port lookup
+        session_socket.start_receive_task(
+            client_addr.ip(),
+            proxy_port,
+            proxy_socket,
+            session_manager,
+        );
 
         // Store socket
         self.udp_sockets.insert(proxy_port, session_socket.clone());
 
-        Ok(session_socket)
+        Ok((session_socket, client_port))
     }
 
     /// Shutdown all UDP sockets for this session
@@ -208,9 +255,10 @@ impl Session {
 /// Sessions are now tracked by client address only, established via query port
 #[derive(Clone)]
 pub struct SessionManager {
-    /// Key: client_addr -> Session
-    /// Sessions are established when query returns a token, not on first packet
-    sessions: Arc<DashMap<SocketAddr, Session>>,
+    /// Key: client_ip -> Session
+    /// Sessions are keyed by IP address only, not IP:Port
+    /// This ensures all connections from the same client use the same session
+    sessions: Arc<DashMap<IpAddr, Session>>,
     timeout_seconds: u64,
 }
 
@@ -231,26 +279,44 @@ impl SessionManager {
         manager
     }
 
-    /// Get an existing session for a client address
-    pub fn get(&self, client_addr: &SocketAddr) -> Option<Session> {
-        self.sessions.get(client_addr).map(|entry| entry.clone())
+    /// Get an existing session for a client IP address
+    pub fn get(&self, client_ip: &IpAddr) -> Option<Session> {
+        self.sessions.get(client_ip).map(|entry| entry.clone())
+    }
+
+    /// Get an existing session for a client SocketAddr (convenience method)
+    pub fn get_by_addr(&self, client_addr: &SocketAddr) -> Option<Session> {
+        self.get(&client_addr.ip())
     }
 
     /// Get a mutable reference to a session for socket creation
-    pub fn get_mut(&self, client_addr: &SocketAddr) -> Option<dashmap::mapref::one::RefMut<'_, SocketAddr, Session>> {
-        self.sessions.get_mut(client_addr)
+    pub fn get_mut(
+        &self,
+        client_ip: &IpAddr,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, IpAddr, Session>> {
+        self.sessions.get_mut(client_ip)
+    }
+
+    /// Get a mutable reference to a session by SocketAddr (convenience method)
+    pub fn get_mut_by_addr(
+        &self,
+        client_addr: &SocketAddr,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, IpAddr, Session>> {
+        self.get_mut(&client_addr.ip())
     }
 
     /// Update or create a session (for session reset) - single port version
     pub async fn upsert(&self, client_addr: SocketAddr, target_addr: SocketAddr) {
+        let client_ip = client_addr.ip();
+
         // If session exists, shut down old sockets
-        if let Some(mut old_session) = self.sessions.get_mut(&client_addr) {
+        if let Some(mut old_session) = self.sessions.get_mut(&client_ip) {
             old_session.shutdown_sockets().await;
         }
 
         let session = Session::new(target_addr);
-        self.sessions.insert(client_addr, session.clone());
-        debug!("Session upserted: {} -> {}", client_addr, target_addr);
+        self.sessions.insert(client_ip, session.clone());
+        debug!("Session upserted: {} -> {}", client_ip, target_addr);
     }
 
     /// Update or create a multi-port session
@@ -260,27 +326,34 @@ impl SessionManager {
         target_ip: String,
         port_mappings: HashMap<(u16, Protocol), u16>,
     ) {
+        let client_ip = client_addr.ip();
+
         // If session exists, shut down old sockets
-        if let Some(mut old_session) = self.sessions.get_mut(&client_addr) {
+        if let Some(mut old_session) = self.sessions.get_mut(&client_ip) {
             old_session.shutdown_sockets().await;
         }
 
         let session = Session::new_multi_port(target_ip.clone(), port_mappings.clone());
-        self.sessions.insert(client_addr, session);
+        self.sessions.insert(client_ip, session);
 
         debug!(
             "Multi-port session upserted: {} -> {} ({} ports)",
-            client_addr,
+            client_ip,
             target_ip,
             port_mappings.len()
         );
     }
 
     /// Touch a session to update its last activity
-    pub fn touch(&self, client_addr: &SocketAddr) {
-        if let Some(mut entry) = self.sessions.get_mut(client_addr) {
+    pub fn touch(&self, client_ip: &IpAddr) {
+        if let Some(mut entry) = self.sessions.get_mut(client_ip) {
             entry.touch();
         }
+    }
+
+    /// Touch a session by SocketAddr (convenience method)
+    pub fn touch_by_addr(&self, client_addr: &SocketAddr) {
+        self.touch(&client_addr.ip());
     }
 
     /// Get the number of active sessions
@@ -351,7 +424,7 @@ mod tests {
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert_eq!(session.target_ip, "10.0.0.1");
         assert_eq!(manager.count(), 1);
     }
@@ -364,11 +437,11 @@ mod tests {
         let target_addr2: SocketAddr = "10.0.0.2:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr1).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert_eq!(session.target_ip, "10.0.0.1");
 
         manager.upsert(client_addr, target_addr2).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert_eq!(session.target_ip, "10.0.0.2");
         assert_eq!(manager.count(), 1);
     }
@@ -380,11 +453,11 @@ mod tests {
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert!(!session.is_timed_out(1));
 
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert!(session.is_timed_out(1));
     }
 
@@ -403,7 +476,7 @@ mod tests {
             .upsert_multi_port(client_addr, target_ip.clone(), port_mappings)
             .await;
 
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get_by_addr(&client_addr).unwrap();
         assert_eq!(session.target_ip, target_ip);
         assert_eq!(session.port_mappings.len(), 3);
 
@@ -425,15 +498,34 @@ mod tests {
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr).await;
-        let session1 = manager.get(&client_addr).unwrap();
+        let session1 = manager.get_by_addr(&client_addr).unwrap();
         let time1 = session1.last_activity;
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        manager.touch(&client_addr);
+        manager.touch_by_addr(&client_addr);
 
-        let session2 = manager.get(&client_addr).unwrap();
+        let session2 = manager.get_by_addr(&client_addr).unwrap();
         let time2 = session2.last_activity;
 
         assert!(time2 > time1);
+    }
+
+    #[tokio::test]
+    async fn test_ip_based_sessions() {
+        // Test that sessions are keyed by IP only, not IP:Port
+        let manager = SessionManager::new(300);
+        let client_addr1: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let client_addr2: SocketAddr = "127.0.0.1:54321".parse().unwrap(); // Same IP, different port
+        let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
+
+        // Create session with first port
+        manager.upsert(client_addr1, target_addr).await;
+        assert_eq!(manager.count(), 1);
+
+        // Access from second port should use same session
+        let session1 = manager.get_by_addr(&client_addr1).unwrap();
+        let session2 = manager.get_by_addr(&client_addr2).unwrap();
+        assert_eq!(session1.target_ip, session2.target_ip);
+        assert_eq!(manager.count(), 1); // Still only one session
     }
 }

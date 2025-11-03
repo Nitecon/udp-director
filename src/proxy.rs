@@ -199,7 +199,7 @@ impl DataProxy {
         debug!("TCP connection from {} on port {}", client_addr, proxy_port);
 
         // Check if session exists for this client
-        let session = self.session_manager.get(&client_addr);
+        let session = self.session_manager.get_by_addr(&client_addr);
 
         if session.is_none() {
             // No session - establish default route
@@ -210,7 +210,7 @@ impl DataProxy {
         // Get session again after potential establishment
         let session = self
             .session_manager
-            .get(&client_addr)
+            .get_by_addr(&client_addr)
             .ok_or_else(|| anyhow::anyhow!("Failed to establish session for TCP connection"))?;
 
         let target_addr = session.get_target_addr(proxy_port, Protocol::Tcp)?;
@@ -239,7 +239,7 @@ impl DataProxy {
         }
 
         // Touch session on close
-        self.session_manager.touch(&client_addr);
+        self.session_manager.touch_by_addr(&client_addr);
         Ok(())
     }
 
@@ -253,12 +253,12 @@ impl DataProxy {
         packet_data: Vec<u8>,
         proxy_port: u16,
     ) -> Result<()> {
-        // Check if session exists for this client
-        if self.session_manager.get(&client_addr).is_some() {
+        // Check if session exists for this client IP
+        if self.session_manager.get_by_addr(&client_addr).is_some() {
             // Session exists - get or create dedicated socket and forward packet
             self.proxy_packet_bidirectional(socket, client_addr, packet_data, proxy_port)
                 .await?;
-            self.session_manager.touch(&client_addr);
+            self.session_manager.touch_by_addr(&client_addr);
         } else {
             // No session exists - establish default route for this client
             self.handle_first_packet(socket, client_addr, packet_data, proxy_port)
@@ -559,18 +559,23 @@ impl DataProxy {
         packet_data: Vec<u8>,
         proxy_port: u16,
     ) -> Result<()> {
-        // Get mutable session to create/get dedicated socket
+        // Get mutable session to create/get dedicated socket (by IP only)
         let mut session_ref = self
             .session_manager
-            .get_mut(&client_addr)
-            .ok_or_else(|| anyhow::anyhow!("Session not found for client {}", client_addr))?;
+            .get_mut_by_addr(&client_addr)
+            .ok_or_else(|| anyhow::anyhow!("Session not found for client {}", client_addr.ip()))?;
 
         // Get target address
         let target_addr = session_ref.get_target_addr(proxy_port, Protocol::Udp)?;
 
         // Get or create dedicated socket for this session/port
-        let session_socket = session_ref
-            .get_or_create_udp_socket(proxy_port, client_addr, proxy_socket.clone())
+        let (session_socket, _client_port) = session_ref
+            .get_or_create_udp_socket(
+                proxy_port,
+                client_addr,
+                proxy_socket.clone(),
+                Arc::new(self.session_manager.clone()),
+            )
             .await?;
 
         debug!(
