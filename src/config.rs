@@ -235,6 +235,7 @@ impl Config {
     }
 
     /// Get the decoded magic bytes
+    #[allow(dead_code)]
     pub fn get_magic_bytes(&self) -> Result<Vec<u8>> {
         hex::decode(&self.control_packet_magic_bytes)
             .with_context(|| "Failed to decode control_packet_magic_bytes")

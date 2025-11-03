@@ -8,13 +8,11 @@ sessionTimeoutSeconds: 300
 controlPacketMagicBytes: "FFFFFFFF5245534554"
 
 # Multi-port configuration - define all ports the proxy should listen on
+# NOTE: TCP support is not yet implemented - use UDP only
 dataPorts:
   - port: 7777
     protocol: "udp"
     name: "game-udp"
-  - port: 7777
-    protocol: "tcp"
-    name: "game-tcp"
   - port: 27015
     protocol: "udp"
     name: "query"
@@ -44,8 +42,6 @@ resourceQueryMapping:
     ports:
       - name: "game-udp"
         portName: "game-udp"
-      - name: "game-tcp"
-        portName: "game-tcp"
       - name: "query"
         portName: "query"
       - name: "rcon"

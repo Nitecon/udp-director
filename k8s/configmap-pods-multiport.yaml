@@ -14,14 +14,11 @@ data:
     sessionTimeoutSeconds: 300
     controlPacketMagicBytes: "FFFFFFFF5245534554"
 
-    # Multi-port configuration
+    # Multi-port configuration (UDP only - TCP support not yet implemented)
     dataPorts:
       - port: 7777
         protocol: "udp"
         name: "game-udp"
-      - port: 7777
-        protocol: "tcp"
-        name: "game-tcp"
       - port: 27015
         protocol: "udp"
         name: "query"
@@ -45,11 +42,9 @@ data:
         version: "v1"
         resource: "pods"
         addressPath: "status.podIP"
-        # Multi-port mapping - maps each proxy port to a container port
+        # Multi-port mapping - each proxy port maps to a container port
         ports:
           - name: "game-udp"
             portName: "game-udp"
-          - name: "game-tcp"
-            portName: "game-tcp"
           - name: "query"
             portName: "query"

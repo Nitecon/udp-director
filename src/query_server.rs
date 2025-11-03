@@ -7,20 +7,26 @@ use tracing::{debug, error, info};
 
 use crate::config::Config;
 use crate::k8s_client::{K8sClient, StatusQuery};
+use crate::session::SessionManager;
 use crate::token_cache::{TokenCache, TokenTarget};
 
 /// Query request from client
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryRequest {
-    pub resource_type: String,
-    pub namespace: String,
-    pub status_query: Option<StatusQueryDto>,
-    pub label_selector: Option<HashMap<String, String>>,
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum QueryRequest {
+    /// Query for a resource and establish a session
+    Query {
+        resource_type: String,
+        namespace: String,
+        status_query: Option<StatusQueryDto>,
+        label_selector: Option<HashMap<String, String>>,
+    },
+    /// Reset an existing session with a new token
+    SessionReset { token: String },
 }
 
 /// Status query DTO
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusQueryDto {
     pub json_path: String,
@@ -45,20 +51,29 @@ pub enum QueryResponse {
 }
 
 /// TCP Query Server (Phase 1)
+/// Now establishes sessions immediately when returning tokens
 pub struct QueryServer {
     port: u16,
     k8s_client: K8sClient,
     token_cache: TokenCache,
+    session_manager: SessionManager,
     config: Config,
 }
 
 impl QueryServer {
     /// Create a new query server
-    pub fn new(port: u16, k8s_client: K8sClient, token_cache: TokenCache, config: Config) -> Self {
+    pub fn new(
+        port: u16,
+        k8s_client: K8sClient,
+        token_cache: TokenCache,
+        session_manager: SessionManager,
+        config: Config,
+    ) -> Self {
         Self {
             port,
             k8s_client,
             token_cache,
+            session_manager,
             config,
         }
     }
@@ -91,6 +106,9 @@ impl QueryServer {
 
     /// Handle a single query connection
     async fn handle_connection(&self, mut stream: TcpStream) -> Result<()> {
+        // Get client address for session establishment
+        let client_addr = stream.peer_addr()?;
+
         // Read the JSON payload
         let mut buffer = vec![0u8; 4096];
         let n = stream
@@ -117,8 +135,8 @@ impl QueryServer {
 
         debug!("Received query: {:?}", request);
 
-        // Process the query
-        let response = self.process_query(request).await;
+        // Process the query and establish session
+        let response = self.process_query(request, client_addr).await;
         let response_json = serde_json::to_string(&response)?;
 
         // Send response
@@ -128,28 +146,96 @@ impl QueryServer {
         Ok(())
     }
 
-    /// Process a query request
-    async fn process_query(&self, request: QueryRequest) -> QueryResponse {
-        let mapping = match self
-            .config
-            .resource_query_mapping
-            .get(&request.resource_type)
-        {
+    /// Process a query request and establish session for client
+    async fn process_query(
+        &self,
+        request: QueryRequest,
+        client_addr: std::net::SocketAddr,
+    ) -> QueryResponse {
+        match request {
+            QueryRequest::Query {
+                resource_type,
+                namespace,
+                status_query,
+                label_selector,
+            } => {
+                self.process_resource_query(
+                    resource_type,
+                    namespace,
+                    status_query,
+                    label_selector,
+                    client_addr,
+                )
+                .await
+            }
+            QueryRequest::SessionReset { token } => {
+                self.process_session_reset(token, client_addr).await
+            }
+        }
+    }
+
+    /// Process a session reset request
+    async fn process_session_reset(
+        &self,
+        token: String,
+        client_addr: std::net::SocketAddr,
+    ) -> QueryResponse {
+        // Look up the token
+        match self.token_cache.lookup(&token).await {
+            Some(target) => {
+                // Valid token - update session
+                self.session_manager
+                    .upsert_multi_port(
+                        client_addr,
+                        target.cluster_ip.clone(),
+                        target.port_mappings.clone(),
+                    )
+                    .await;
+                info!(
+                    "Session reset via query port: {} -> {} ({} ports)",
+                    client_addr,
+                    target.cluster_ip,
+                    target.port_mappings.len()
+                );
+                QueryResponse::Success { token }
+            }
+            None => QueryResponse::Error {
+                error: "Invalid or expired token".to_string(),
+            },
+        }
+    }
+
+    /// Process a resource query request
+    async fn process_resource_query(
+        &self,
+        resource_type: String,
+        namespace: String,
+        status_query: Option<StatusQueryDto>,
+        label_selector: Option<HashMap<String, String>>,
+        client_addr: std::net::SocketAddr,
+    ) -> QueryResponse {
+        let mapping = match self.config.resource_query_mapping.get(&resource_type) {
             Some(m) => m,
             None => {
                 return QueryResponse::Error {
-                    error: format!("Unknown resource type: {}", request.resource_type),
+                    error: format!("Unknown resource type: {}", resource_type),
                 };
             }
         };
 
-        let status_query = request.status_query.as_ref().map(|sq| StatusQuery {
+        let status_query_obj = status_query.as_ref().map(|sq| StatusQuery {
             json_path: sq.json_path.clone(),
             expected_values: sq.expected_values.clone(),
         });
 
         let resources = match self
-            .query_k8s_resources(&request, mapping, status_query.as_ref())
+            .query_k8s_resources(
+                &resource_type,
+                &namespace,
+                &label_selector,
+                mapping,
+                status_query_obj.as_ref(),
+            )
             .await
         {
             Ok(res) => res,
@@ -172,7 +258,7 @@ impl QueryServer {
                 .extract_multi_port_target_info(
                     selected_resource,
                     mapping,
-                    &request.namespace,
+                    &namespace,
                     &resource_name,
                 )
                 .await
@@ -194,11 +280,17 @@ impl QueryServer {
                 }
             }
 
-            let target = TokenTarget::multi_port(cluster_ip.clone(), token_port_mappings);
+            let target = TokenTarget::multi_port(cluster_ip.clone(), token_port_mappings.clone());
             let token = self.token_cache.generate_token(target).await;
 
+            // Establish session immediately for this client
+            self.session_manager
+                .upsert_multi_port(client_addr, cluster_ip.clone(), token_port_mappings)
+                .await;
+
             info!(
-                "Generated multi-port token for resource: {} ({} ports)",
+                "Generated multi-port token and established session for {} -> {} ({} ports)",
+                client_addr,
                 resource_name,
                 ports_map.len()
             );
@@ -211,22 +303,32 @@ impl QueryServer {
         } else {
             // Single port approach (backwards compatibility)
             let (cluster_ip, port) = match self
-                .extract_target_info(
-                    selected_resource,
-                    mapping,
-                    &request.namespace,
-                    &resource_name,
-                )
+                .extract_target_info(selected_resource, mapping, &namespace, &resource_name)
                 .await
             {
                 Ok(info) => info,
                 Err(e) => return e,
             };
 
-            let target = TokenTarget::single_port(cluster_ip, port);
+            let target = TokenTarget::single_port(cluster_ip.clone(), port);
             let token = self.token_cache.generate_token(target).await;
 
-            info!("Generated token for resource: {}", resource_name);
+            // Establish session immediately for this client
+            let target_addr =
+                format!("{}:{}", cluster_ip, port)
+                    .parse()
+                    .map_err(|e| QueryResponse::Error {
+                        error: format!("Invalid target address: {}", e),
+                    });
+
+            if let Ok(addr) = target_addr {
+                self.session_manager.upsert(client_addr, addr).await;
+                info!(
+                    "Generated token and established session for {} -> {}",
+                    client_addr, resource_name
+                );
+            }
+
             QueryResponse::Success { token }
         }
     }
@@ -234,18 +336,15 @@ impl QueryServer {
     /// Query Kubernetes for matching resources
     async fn query_k8s_resources(
         &self,
-        request: &QueryRequest,
+        _resource_type: &str,
+        namespace: &str,
+        label_selector: &Option<HashMap<String, String>>,
         mapping: &crate::config::ResourceMapping,
         status_query: Option<&StatusQuery>,
     ) -> Result<Vec<kube::api::DynamicObject>, QueryResponse> {
         let resources = self
             .k8s_client
-            .query_resources(
-                &request.namespace,
-                mapping,
-                status_query,
-                request.label_selector.as_ref(),
-            )
+            .query_resources(namespace, mapping, status_query, label_selector.as_ref())
             .await
             .map_err(|e| QueryResponse::Error {
                 error: format!("Failed to query resources: {}", e),
@@ -395,6 +494,7 @@ impl Clone for QueryServer {
             port: self.port,
             k8s_client: self.k8s_client.clone(),
             token_cache: self.token_cache.clone(),
+            session_manager: self.session_manager.clone(),
             config: self.config.clone(),
         }
     }
@@ -405,29 +505,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_query_request_deserialization() {
-        let json = r#"{
-            "resourceType": "gameserver",
-            "namespace": "game-servers",
-            "statusQuery": {
-                "jsonPath": "status.state",
-                "expectedValues": ["Allocated", "Ready"]
-            },
-            "labelSelector": {
-                "game.example.com/map": "de_dust2"
+    fn test_query_request_serialization() {
+        // Test what the correct format should be
+        let mut label_selector = HashMap::new();
+        label_selector.insert("game.example.com/map".to_string(), "de_dust2".to_string());
+
+        let request = QueryRequest::Query {
+            resource_type: "gameserver".to_string(),
+            namespace: "game-servers".to_string(),
+            status_query: Some(StatusQueryDto {
+                json_path: "status.state".to_string(),
+                expected_values: vec!["Allocated".to_string(), "Ready".to_string()],
+            }),
+            label_selector: Some(label_selector),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        println!("Serialized JSON: {}", json);
+
+        // Now deserialize it back
+        let deserialized: QueryRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            QueryRequest::Query {
+                resource_type,
+                namespace,
+                status_query,
+                label_selector,
+            } => {
+                assert_eq!(resource_type, "gameserver");
+                assert_eq!(namespace, "game-servers");
+                assert!(status_query.is_some());
+                assert!(label_selector.is_some());
+
+                let sq = status_query.unwrap();
+                assert_eq!(sq.expected_values.len(), 2);
+                assert_eq!(sq.expected_values[0], "Allocated");
+                assert_eq!(sq.expected_values[1], "Ready");
             }
+            _ => panic!("Expected Query variant"),
+        }
+    }
+
+    #[test]
+    fn test_session_reset_request_deserialization() {
+        let json = r#"{
+            "type": "sessionReset",
+            "token": "test-token-123"
         }"#;
 
         let request: QueryRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(request.resource_type, "gameserver");
-        assert_eq!(request.namespace, "game-servers");
-        assert!(request.status_query.is_some());
-        assert!(request.label_selector.is_some());
-
-        let status_query = request.status_query.unwrap();
-        assert_eq!(status_query.expected_values.len(), 2);
-        assert_eq!(status_query.expected_values[0], "Allocated");
-        assert_eq!(status_query.expected_values[1], "Ready");
+        match request {
+            QueryRequest::SessionReset { token } => {
+                assert_eq!(token, "test-token-123");
+            }
+            _ => panic!("Expected SessionReset variant"),
+        }
     }
 
     #[test]

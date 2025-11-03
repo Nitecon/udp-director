@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::config::{Config, DataPortConfig, Protocol};
 use crate::k8s_client::K8sClient;
@@ -81,27 +81,34 @@ impl DataProxy {
 
         // Bind and spawn a task for each data port
         for port_config in &self.data_ports {
-            let socket = Arc::new(
-                UdpSocket::bind(format!("0.0.0.0:{}", port_config.port))
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to bind data proxy to port {} ({})",
-                            port_config.port, port_config.protocol
-                        )
-                    })?,
-            );
-
-            info!(
-                "Data proxy listening on {} port {}",
-                port_config.protocol, port_config.port
-            );
-
             let proxy = self.clone();
             let port = port_config.port;
             let protocol = port_config.protocol;
 
-            let task = tokio::spawn(async move { proxy.run_socket(socket, port, protocol).await });
+            let task = match protocol {
+                Protocol::Udp => {
+                    let socket = Arc::new(
+                        UdpSocket::bind(format!("0.0.0.0:{}", port))
+                            .await
+                            .with_context(|| {
+                                format!("Failed to bind UDP data proxy to port {}", port)
+                            })?,
+                    );
+
+                    info!("Data proxy listening on UDP port {}", port);
+                    tokio::spawn(async move { proxy.run_udp_socket(socket, port).await })
+                }
+                Protocol::Tcp => {
+                    let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
+                        .await
+                        .with_context(|| {
+                            format!("Failed to bind TCP data proxy to port {}", port)
+                        })?;
+
+                    info!("Data proxy listening on TCP port {}", port);
+                    tokio::spawn(async move { proxy.run_tcp_listener(listener, port).await })
+                }
+            };
 
             tasks.push(task);
         }
@@ -111,13 +118,8 @@ impl DataProxy {
         Ok(())
     }
 
-    /// Run a single socket listener
-    async fn run_socket(
-        &self,
-        socket: Arc<UdpSocket>,
-        proxy_port: u16,
-        protocol: Protocol,
-    ) -> Result<()> {
+    /// Run a UDP socket listener
+    async fn run_udp_socket(&self, socket: Arc<UdpSocket>, proxy_port: u16) -> Result<()> {
         let mut buffer = vec![0u8; 65535]; // Max UDP packet size
 
         loop {
@@ -129,233 +131,239 @@ impl DataProxy {
 
                     tokio::spawn(async move {
                         if let Err(e) = proxy
-                            .handle_packet_with_port(
-                                socket_clone,
-                                client_addr,
-                                packet_data,
-                                proxy_port,
-                                protocol,
-                            )
+                            .handle_udp_packet(socket_clone, client_addr, packet_data, proxy_port)
                             .await
                         {
                             error!(
-                                "Error handling packet from {} on port {} ({}): {}",
-                                client_addr, proxy_port, protocol, e
+                                "Error handling UDP packet from {} on port {}: {}",
+                                client_addr, proxy_port, e
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Error receiving UDP packet on port {}: {}", proxy_port, e);
+                }
+            }
+        }
+    }
+
+    /// Run a TCP listener
+    async fn run_tcp_listener(&self, listener: TcpListener, proxy_port: u16) -> Result<()> {
+        loop {
+            match listener.accept().await {
+                Ok((stream, client_addr)) => {
+                    let proxy = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = proxy
+                            .handle_tcp_connection(stream, client_addr, proxy_port)
+                            .await
+                        {
+                            error!(
+                                "Error handling TCP connection from {} on port {}: {}",
+                                client_addr, proxy_port, e
                             );
                         }
                     });
                 }
                 Err(e) => {
                     error!(
-                        "Error receiving packet on port {} ({}): {}",
-                        proxy_port, protocol, e
+                        "Error accepting TCP connection on port {}: {}",
+                        proxy_port, e
                     );
                 }
             }
         }
     }
 
-    /// Handle a single packet with port and protocol information
-    async fn handle_packet_with_port(
+    /// Handle a UDP packet
+    async fn handle_udp_packet(
         &self,
         socket: Arc<UdpSocket>,
         client_addr: SocketAddr,
         packet_data: Vec<u8>,
         proxy_port: u16,
-        protocol: Protocol,
     ) -> Result<()> {
-        // Get magic bytes
-        let magic_bytes = self.config.get_magic_bytes()?;
-
-        // Check if this is a control packet (R-3.2.3)
-        if packet_data.starts_with(&magic_bytes) {
-            self.handle_control_packet(client_addr, &packet_data, &magic_bytes)
-                .await?;
-            return Ok(());
-        }
-
-        // This is a data packet (R-3.2.4)
-        self.handle_data_packet(socket, client_addr, packet_data, proxy_port, protocol)
+        // Route based on existing session - no more control packet handling
+        self.handle_udp_data_packet(socket, client_addr, packet_data, proxy_port)
             .await
     }
 
-    /// Handle a control packet (session reset) - supports multi-port
-    async fn handle_control_packet(
+    /// Handle a TCP connection
+    async fn handle_tcp_connection(
         &self,
+        mut stream: TcpStream,
         client_addr: SocketAddr,
-        packet_data: &[u8],
-        magic_bytes: &[u8],
+        proxy_port: u16,
     ) -> Result<()> {
-        debug!("Control packet received from {}", client_addr);
+        debug!("TCP connection from {} on port {}", client_addr, proxy_port);
 
-        // Strip magic bytes and extract token
-        let token_bytes = &packet_data[magic_bytes.len()..];
-        let token = String::from_utf8_lossy(token_bytes).to_string();
+        // Check if session exists for this client
+        let session = self.session_manager.get(&client_addr);
 
-        // Look up the token
-        match self.token_cache.lookup(&token).await {
-            Some(target) => {
-                // Valid token - update multi-port session
-                self.session_manager.upsert_multi_port(
-                    client_addr,
-                    target.cluster_ip.clone(),
-                    target.port_mappings.clone(),
-                );
-                info!(
-                    "Multi-port session reset: {} -> {} ({} ports, token: {})",
-                    client_addr,
-                    target.cluster_ip,
-                    target.port_mappings.len(),
-                    &token[..8.min(token.len())]
+        if session.is_none() {
+            // No session - establish default route
+            self.establish_default_session(client_addr, proxy_port, Protocol::Tcp)
+                .await?;
+        }
+
+        // Get session again after potential establishment
+        let session = self
+            .session_manager
+            .get(&client_addr)
+            .ok_or_else(|| anyhow::anyhow!("Failed to establish session for TCP connection"))?;
+
+        let target_addr = session.get_target_addr(proxy_port, Protocol::Tcp)?;
+
+        // Connect to target
+        let mut target_stream = TcpStream::connect(target_addr).await?;
+        info!(
+            "TCP connection established: {} -> {}",
+            client_addr, target_addr
+        );
+
+        // Bidirectional copy
+        match tokio::io::copy_bidirectional(&mut stream, &mut target_stream).await {
+            Ok((from_client, from_server)) => {
+                debug!(
+                    "TCP connection closed: {} -> {} (client->server: {} bytes, server->client: {} bytes)",
+                    client_addr, target_addr, from_client, from_server
                 );
             }
-            None => {
-                // Invalid token - drop packet and log error
-                warn!(
-                    "Invalid token in control packet from {}: {}",
-                    client_addr,
-                    &token[..8.min(token.len())]
+            Err(e) => {
+                error!(
+                    "TCP proxy error for {} -> {}: {}",
+                    client_addr, target_addr, e
                 );
             }
         }
 
+        // Touch session on close
+        self.session_manager.touch(&client_addr);
         Ok(())
     }
 
-    /// Handle a data packet (standard proxy) with port-specific routing
-    async fn handle_data_packet(
+    /// Handle a UDP data packet (standard proxy) with port-specific routing
+    /// Sessions are established via query port, so we just route based on existing session
+    /// Now uses dedicated sockets for bi-directional communication
+    async fn handle_udp_data_packet(
         &self,
         socket: Arc<UdpSocket>,
         client_addr: SocketAddr,
         packet_data: Vec<u8>,
         proxy_port: u16,
-        protocol: Protocol,
     ) -> Result<()> {
-        // Check if session exists for this port and protocol
-        if let Some(session) = self.session_manager.get(&client_addr, proxy_port, protocol) {
-            // Session exists - get target address for this port
-            let target_addr = session.get_target_addr(proxy_port, protocol)?;
-
-            // Proxy the packet
-            self.proxy_packet(socket, client_addr, target_addr, packet_data)
+        // Check if session exists for this client
+        if self.session_manager.get(&client_addr).is_some() {
+            // Session exists - get or create dedicated socket and forward packet
+            self.proxy_packet_bidirectional(socket, client_addr, packet_data, proxy_port)
                 .await?;
-            self.session_manager
-                .touch(&client_addr, proxy_port, protocol);
+            self.session_manager.touch(&client_addr);
         } else {
-            // No session exists - this is the first packet
-            self.handle_first_packet(socket, client_addr, packet_data, proxy_port, protocol)
+            // No session exists - establish default route for this client
+            self.handle_first_packet(socket, client_addr, packet_data, proxy_port)
                 .await?;
         }
 
         Ok(())
     }
 
-    /// Handle the first packet from a client (session establishment) with port-specific routing
+    /// Handle the first UDP packet from a client without an established session
+    /// This happens when clients connect without using the query port
+    /// We establish a session to the default endpoint
     async fn handle_first_packet(
         &self,
         socket: Arc<UdpSocket>,
         client_addr: SocketAddr,
         packet_data: Vec<u8>,
         proxy_port: u16,
+    ) -> Result<()> {
+        // Establish default session
+        self.establish_default_session(client_addr, proxy_port, Protocol::Udp)
+            .await?;
+
+        // Forward this first packet using bi-directional proxy
+        self.proxy_packet_bidirectional(socket, client_addr, packet_data, proxy_port)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Establish a default session for a client
+    async fn establish_default_session(
+        &self,
+        client_addr: SocketAddr,
+        proxy_port: u16,
         protocol: Protocol,
     ) -> Result<()> {
-        // Try to interpret the entire packet as a token
-        let potential_token = String::from_utf8_lossy(&packet_data).to_string();
+        debug!(
+            "Establishing default route for {} on port {} ({})",
+            client_addr, proxy_port, protocol
+        );
 
-        match self.token_cache.lookup(&potential_token).await {
-            Some(target) => {
-                // Valid token - create multi-port session
-                self.session_manager.upsert_multi_port(
-                    client_addr,
-                    target.cluster_ip.clone(),
-                    target.port_mappings.clone(),
-                );
-                info!(
-                    "New multi-port session established: {} -> {} ({} ports, token: {})",
-                    client_addr,
-                    target.cluster_ip,
-                    target.port_mappings.len(),
-                    &potential_token[..8.min(potential_token.len())]
-                );
-                // Token packet is consumed, not forwarded
-            }
-            None => {
-                // Not a valid token - route to default endpoint
+        // Check cache first
+        let cached_endpoint = self.default_endpoint_cache.read().await;
+        let (target_ip, port_mappings) = if let Some(cache) = cached_endpoint.as_ref() {
+            // Use cached endpoint
+            if cache.port_mappings.contains_key(&(proxy_port, protocol)) {
                 debug!(
-                    "No valid token found, routing to default endpoint for {} on port {} ({})",
-                    client_addr, proxy_port, protocol
+                    "Using cached default endpoint for port {} ({})",
+                    proxy_port, protocol
                 );
-
-                // Check cache first
-                let cached_endpoint = self.default_endpoint_cache.read().await;
-                let target_addr = if let Some(cache) = cached_endpoint.as_ref() {
-                    // Use cached endpoint for this port
-                    if let Some(target_port) = cache.port_mappings.get(&(proxy_port, protocol)) {
-                        let addr = format!("{}:{}", cache.address, target_port).parse()?;
-                        debug!(
-                            "Using cached default endpoint: {} for port {} ({})",
-                            addr, proxy_port, protocol
-                        );
-                        addr
-                    } else {
-                        // Port not in cache, need to query
-                        drop(cached_endpoint);
-                        let (address, port_mappings) = self.query_default_endpoint().await?;
-                        let target_port =
-                            port_mappings.get(&(proxy_port, protocol)).ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "Default endpoint does not support port {} ({})",
-                                    proxy_port,
-                                    protocol
-                                )
-                            })?;
-                        format!("{}:{}", address, target_port).parse()?
-                    }
-                } else {
-                    // Cache miss - need to query and cache
-                    drop(cached_endpoint); // Release read lock
-
-                    debug!("Cache miss, querying for default endpoint");
-                    let (address, port_mappings) = self.query_default_endpoint().await?;
-
-                    // Cache the result
-                    let mut cache_write = self.default_endpoint_cache.write().await;
-                    *cache_write = Some(DefaultEndpointCache {
-                        address: address.clone(),
-                        port_mappings: port_mappings.clone(),
-                    });
-                    drop(cache_write);
-
-                    info!(
-                        "Cached default endpoint: {} ({} ports)",
-                        address,
-                        port_mappings.len()
+                (cache.address.clone(), cache.port_mappings.clone())
+            } else {
+                // Port not in cache, need to query
+                drop(cached_endpoint);
+                let (address, mappings) = self.query_default_endpoint().await?;
+                if !mappings.contains_key(&(proxy_port, protocol)) {
+                    anyhow::bail!(
+                        "Default endpoint does not support port {} ({})",
+                        proxy_port,
+                        protocol
                     );
-
-                    let target_port =
-                        port_mappings.get(&(proxy_port, protocol)).ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Default endpoint does not support port {} ({})",
-                                proxy_port,
-                                protocol
-                            )
-                        })?;
-                    format!("{}:{}", address, target_port).parse()?
-                };
-
-                // Create single-port session for default endpoint
-                self.session_manager.upsert(client_addr, target_addr);
-
-                info!(
-                    "New session to default endpoint: {} -> {} (port {} {})",
-                    client_addr, target_addr, proxy_port, protocol
-                );
-
-                // Forward this first packet to the default endpoint
-                self.proxy_packet(socket, client_addr, target_addr, packet_data)
-                    .await?;
+                }
+                (address, mappings)
             }
-        }
+        } else {
+            // Cache miss - need to query and cache
+            drop(cached_endpoint); // Release read lock
+
+            debug!("Cache miss, querying for default endpoint");
+            let (address, mappings) = self.query_default_endpoint().await?;
+
+            // Cache the result
+            let mut cache_write = self.default_endpoint_cache.write().await;
+            *cache_write = Some(DefaultEndpointCache {
+                address: address.clone(),
+                port_mappings: mappings.clone(),
+            });
+            drop(cache_write);
+
+            info!(
+                "Cached default endpoint: {} ({} ports)",
+                address,
+                mappings.len()
+            );
+
+            if !mappings.contains_key(&(proxy_port, protocol)) {
+                anyhow::bail!(
+                    "Default endpoint does not support port {} ({})",
+                    proxy_port,
+                    protocol
+                );
+            }
+            (address, mappings)
+        };
+
+        // Create multi-port session for default endpoint
+        self.session_manager
+            .upsert_multi_port(client_addr, target_ip.clone(), port_mappings)
+            .await;
+
+        info!(
+            "New session to default endpoint: {} -> {} (port {} {})",
+            client_addr, target_ip, proxy_port, protocol
+        );
 
         Ok(())
     }
@@ -543,29 +551,41 @@ impl DataProxy {
             .ok_or_else(|| anyhow::anyhow!("No service found for default endpoint resource"))
     }
 
-    /// Proxy a packet to the target
-    async fn proxy_packet(
+    /// Proxy a packet using dedicated socket for bi-directional communication
+    async fn proxy_packet_bidirectional(
         &self,
-        socket: Arc<UdpSocket>,
+        proxy_socket: Arc<UdpSocket>,
         client_addr: SocketAddr,
-        target_addr: SocketAddr,
         packet_data: Vec<u8>,
+        proxy_port: u16,
     ) -> Result<()> {
+        // Get mutable session to create/get dedicated socket
+        let mut session_ref = self
+            .session_manager
+            .get_mut(&client_addr)
+            .ok_or_else(|| anyhow::anyhow!("Session not found for client {}", client_addr))?;
+
+        // Get target address
+        let target_addr = session_ref.get_target_addr(proxy_port, Protocol::Udp)?;
+
+        // Get or create dedicated socket for this session/port
+        let session_socket = session_ref
+            .get_or_create_udp_socket(proxy_port, client_addr, proxy_socket.clone())
+            .await?;
+
         debug!(
-            "Proxying packet: {} -> {} ({} bytes)",
+            "Proxying packet via dedicated socket: {} -> {} ({} bytes)",
             client_addr,
             target_addr,
             packet_data.len()
         );
 
-        // Send packet to target
-        socket.send_to(&packet_data, target_addr).await?;
-
-        // Note: For full bi-directional proxying, we would need to:
-        // 1. Create a dedicated socket for each session
-        // 2. Listen for responses from the target
-        // 3. Forward responses back to the client
-        // This is a simplified implementation that handles client->target direction
+        // Send packet to target using dedicated socket
+        // The receive task is already running to handle responses
+        session_socket
+            .socket()
+            .send_to(&packet_data, target_addr)
+            .await?;
 
         Ok(())
     }

@@ -42,6 +42,8 @@ Thumbs.db
 
 # Temporary scratch files
 task.md
+implementation.md
+migration.md
 
 # Local configuration files
 config.yaml

@@ -38,9 +38,12 @@ spec:
             - name: query
               containerPort: 9000
               protocol: TCP
-            - name: data
+            - name: data-udp
               containerPort: 7777
               protocol: UDP
+            - name: data-tcp
+              containerPort: 7777
+              protocol: TCP
             - name: metrics
               containerPort: 9090
               protocol: TCP
@@ -90,10 +93,14 @@ spec:
       port: 9000
       targetPort: 9000
       protocol: TCP
-    - name: data
+    - name: data-udp
       port: 7777
       targetPort: 7777
       protocol: UDP
+    - name: data-tcp
+      port: 7777
+      targetPort: 7777
+      protocol: TCP
     - name: metrics
       port: 9090
       targetPort: 9090

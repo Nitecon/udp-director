@@ -9,6 +9,7 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 
 ## Quick Links
 
+- **[Migration Guide](MIGRATION.md)** - v0.2.0 architectural changes and upgrade guide
 - **[Technical Reference](Docs/TechnicalReference.md)** - Complete deployment and technical guide
 - **[Metrics Documentation](Docs/Metrics.md)** - Prometheus metrics and monitoring
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
@@ -34,24 +35,31 @@ Traditional UDP load balancers are stateless and can't intelligently route clien
 
 ## How It Works
 
-UDP Director uses a three-phase flow:
+UDP Director uses a query-based session establishment flow:
 
 ```
 1. QUERY (TCP :9000)
    Client → Director: "Find me a game server with map=de_dust2"
    Director → K8s API: Query resources, find matching service
-   Director → Client: Return token (valid for 30s)
+   Director → Client: Return token + establish session immediately
+   Session: Client IP:Port → Target IP:Port mapping created
 
-2. CONNECT (UDP :7777)
-   Client → Director: Send token as first packet
-   Director: Create session mapping (Client IP:Port → Target IP:Port)
-   Client ↔ Target: All UDP traffic proxied
+2. CONNECT (TCP/UDP :7777+)
+   Client → Director: Connect and send data (no token needed)
+   Director: Route based on existing session
+   Client ↔ Target: All traffic proxied (TCP or UDP)
 
 3. RESET (UDP :7777) - Optional
    Client → Director: Send control packet with new token
    Director: Update session to point to new target
    Client ↔ New Target: Traffic seamlessly redirected
 ```
+
+**Key Features:**
+- **True Layer 3 Load Balancing**: Sessions established via query port, not first packet inspection
+- **TCP & UDP Support**: Full support for both protocols on data ports
+- **No Packet Loss**: All data packets forwarded immediately
+- **Multi-Port Sessions**: Single query establishes access to all configured ports
 
 ## Quick Start
 
@@ -111,17 +119,28 @@ kubectl set image deployment/udp-director \
 ### Client Integration Example
 
 ```bash
-# Phase 1: Query for backend (with label and status filtering)
+# Phase 1: Query for backend (session established automatically)
 echo '{"resourceType":"gameserver","namespace":"starx","labelSelector":{"agones.dev/fleet":"m-tutorial"},"statusQuery":{"jsonPath":"status.state","expectedValue":"Ready"}}' | nc <LoadBalancer-IP> 9000
-# Response: {"token":"550e8400-e29b-41d4-a716-446655440000"}
+# Response: {"token":"550e8400-...","address":"10.244.1.44","ports":{"game-udp":7777,"game-tcp":7777}}
+# Session is now established for your client IP:Port
 
-# Phase 2: Connect with token
-echo "550e8400-e29b-41d4-a716-446655440000" | nc -u <LoadBalancer-IP> 7777
+# Phase 2: Connect and send data immediately (no token needed)
+# UDP example
+echo "GAME_DATA_PACKET" | nc -u <LoadBalancer-IP> 7777
+
+# TCP example
+nc <LoadBalancer-IP> 7777
+# Start sending data immediately
 
 # Phase 3: Reset to new server (optional)
 # Send control packet: [MagicBytes][NewToken]
 echo -n -e "\xFF\xFF\xFF\xFF\x52\x45\x53\x45\x54${NEW_TOKEN}" | nc -u <LoadBalancer-IP> 7777
 ```
+
+**Note**: Session is established when you query, not when you send the first packet. This means:
+- No need to send token as first packet
+- All data packets are forwarded immediately
+- Works with standard TCP/UDP clients
 
 See [Technical Reference](Docs/TECHNICAL_REFERENCE.md) and [Testing Guide](Docs/TESTING.md) for complete examples.
 
@@ -249,6 +268,16 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 ---
 
-**Version**: 0.1.0  
+**Version**: 0.2.0  
 **Status**: Production Ready  
 **Target**: Cilium Service Mesh on Kubernetes
+
+## What's New in v0.2.0
+
+- ✅ **True Layer 3 Load Balancing**: Sessions established via query port
+- ✅ **Full TCP Support**: TCP and UDP protocols on data ports
+- ✅ **No Packet Loss**: All data packets forwarded immediately
+- ✅ **Simplified Client Integration**: No need to send token as first packet
+- ✅ **Better Performance**: Reduced latency, no first packet inspection
+
+See [MIGRATION.md](MIGRATION.md) for complete details.

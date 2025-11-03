@@ -66,6 +66,7 @@ async fn main() -> Result<()> {
             config.query_port,
             k8s_client.clone(),
             token_cache.clone(),
+            session_manager.clone(),
             config.clone(),
         );
         tokio::spawn(async move {
@@ -147,7 +148,7 @@ async fn main() -> Result<()> {
     info!("Active sessions at shutdown: {}", session_manager.count());
 
     // Clear all active sessions
-    session_manager.clear_all();
+    session_manager.clear_all().await;
 
     // Give tasks a moment to finish their current operations
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
