@@ -5,6 +5,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod k8s_client;
+mod load_balancer;
 mod metrics;
 mod metrics_server;
 mod proxy;
@@ -15,6 +16,7 @@ mod token_cache;
 
 use config::Config;
 use k8s_client::K8sClient;
+use load_balancer::LoadBalancer;
 use proxy::{DataProxy, DefaultEndpointCacheHandle};
 use query_server::QueryServer;
 use resource_monitor::ResourceMonitor;
@@ -57,8 +59,18 @@ async fn main() -> Result<()> {
 
     // Initialize shared state
     let token_cache = TokenCache::new(config.token_ttl_seconds);
-    let session_manager = SessionManager::new(config.session_timeout_seconds);
+    let mut session_manager = SessionManager::new(config.session_timeout_seconds);
     let default_endpoint_cache = DefaultEndpointCacheHandle::new();
+
+    // Initialize load balancer for session tracking
+    let lb_config = config.get_load_balancing();
+    let load_balancer = LoadBalancer::new(lb_config.strategy, k8s_client.clone());
+    
+    // Set up cleanup callback to decrement load balancer counts
+    let lb_for_callback = load_balancer.clone();
+    session_manager.set_cleanup_callback(std::sync::Arc::new(move |target_ip: &str| {
+        lb_for_callback.decrement_session(target_ip);
+    }));
 
     // Start Query Server (Phase 1)
     let query_handle = {

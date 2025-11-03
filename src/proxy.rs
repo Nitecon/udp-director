@@ -8,6 +8,7 @@ use tracing::{debug, error, info};
 
 use crate::config::{Config, DataPortConfig, Protocol};
 use crate::k8s_client::K8sClient;
+use crate::load_balancer::LoadBalancer;
 use crate::session::SessionManager;
 use crate::token_cache::TokenCache;
 
@@ -27,6 +28,7 @@ pub struct DataProxy {
     config: Config,
     k8s_client: K8sClient,
     default_endpoint_cache: Arc<RwLock<Option<DefaultEndpointCache>>>,
+    load_balancer: LoadBalancer,
 }
 
 /// Shared cache for default endpoint that can be invalidated
@@ -65,6 +67,9 @@ impl DataProxy {
         cache_handle: DefaultEndpointCacheHandle,
     ) -> Self {
         let data_ports = config.get_data_ports();
+        let lb_config = config.get_load_balancing();
+        let load_balancer = LoadBalancer::new(lb_config.strategy, k8s_client.clone());
+        
         Self {
             data_ports,
             token_cache,
@@ -72,6 +77,7 @@ impl DataProxy {
             config,
             k8s_client,
             default_endpoint_cache: cache_handle.get_cache(),
+            load_balancer,
         }
     }
 
@@ -360,6 +366,9 @@ impl DataProxy {
             .upsert_multi_port(client_addr, target_ip.clone(), port_mappings)
             .await;
 
+        // Increment load balancer session count
+        self.load_balancer.increment_session(&target_ip);
+
         info!(
             "New session to default endpoint: {} -> {} (port {} {})",
             client_addr, target_ip, proxy_port, protocol
@@ -415,9 +424,19 @@ impl DataProxy {
             anyhow::bail!("No matching resources found for default endpoint");
         }
 
-        let selected_resource = &resources[0];
+        // Use load balancer to select the best backend
+        let address_path = mapping
+            .address_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("address_path is required for default endpoint"))?;
+
+        let selected_resource = self.load_balancer.select_backend(
+            &resources,
+            address_path,
+            mapping.address_type.as_deref(),
+        )?;
         self.extract_endpoint_target_multi_port(
-            selected_resource,
+            &selected_resource,
             mapping,
             &default_endpoint.namespace,
         )
@@ -606,6 +625,7 @@ impl Clone for DataProxy {
             config: self.config.clone(),
             k8s_client: self.k8s_client.clone(),
             default_endpoint_cache: self.default_endpoint_cache.clone(),
+            load_balancer: self.load_balancer.clone(),
         }
     }
 }

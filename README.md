@@ -10,6 +10,7 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 ## Quick Links
 
 - **[Migration Guide](MIGRATION.md)** - v0.2.0 architectural changes and upgrade guide
+- **[Load Balancing](Docs/load-balancing.md)** - Load balancing strategies and configuration
 - **[Technical Reference](Docs/TechnicalReference.md)** - Complete deployment and technical guide
 - **[Metrics Documentation](Docs/Metrics.md)** - Prometheus metrics and monitoring
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
@@ -57,9 +58,11 @@ UDP Director uses a query-based session establishment flow:
 
 **Key Features:**
 - **True Layer 3 Load Balancing**: Sessions established via query port, not first packet inspection
+- **Intelligent Load Balancing**: Least sessions or label-based arithmetic strategies
 - **TCP & UDP Support**: Full support for both protocols on data ports
 - **No Packet Loss**: All data packets forwarded immediately
 - **Multi-Port Sessions**: Single query establishes access to all configured ports
+- **Capacity-Aware Routing**: Prevent overloading backends with label-based load balancing
 
 ## Quick Start
 
@@ -198,11 +201,21 @@ tokenTTLSeconds: 30                # Token validity
 sessionTimeoutSeconds: 300         # Session timeout
 controlPacketMagicBytes: "FFFFFFFF5245534554"  # Control packet ID
 
+# Load balancing (optional)
+loadBalancing:
+  type: "leastSessions"            # or "labelArithmetic"
+  # For labelArithmetic:
+  # currentLabel: "currentUsers"
+  # maxLabel: "maxUsers"
+  # overlap: 2
+
 resourceQueryMapping:
   # Resource-specific mappings (see individual files)
 ```
 
-See [Multi-Port Support](Docs/MultiPortSupport.md) for details on multi-port configuration.
+See:
+- [Multi-Port Support](Docs/MultiPortSupport.md) for multi-port configuration
+- [Load Balancing](Docs/load-balancing.md) for load balancing strategies
 
 Edit the chosen ConfigMap to customize for your environment.
 

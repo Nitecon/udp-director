@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::load_balancer::LoadBalancingConfig;
+
 /// Protocol type for data ports
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,6 +60,10 @@ pub struct Config {
 
     /// Defines how client queries map to k8s resources
     pub resource_query_mapping: HashMap<String, ResourceMapping>,
+
+    /// Load balancing configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_balancing: Option<LoadBalancingConfig>,
 }
 
 /// Default endpoint query configuration
@@ -234,6 +240,13 @@ impl Config {
         &self.default_endpoint
     }
 
+    /// Get the load balancing configuration (or default)
+    pub fn get_load_balancing(&self) -> LoadBalancingConfig {
+        self.load_balancing
+            .clone()
+            .unwrap_or_else(LoadBalancingConfig::default)
+    }
+
     /// Get the decoded magic bytes
     #[allow(dead_code)]
     pub fn get_magic_bytes(&self) -> Result<Vec<u8>> {
@@ -268,6 +281,7 @@ mod tests {
             session_timeout_seconds: 300,
             control_packet_magic_bytes: "FFFFFFFF5245534554".to_string(),
             resource_query_mapping: HashMap::new(),
+            load_balancing: None,
         };
 
         let endpoint = config.get_default_endpoint();
@@ -294,6 +308,7 @@ mod tests {
             session_timeout_seconds: 300,
             control_packet_magic_bytes: "FFFFFFFF5245534554".to_string(),
             resource_query_mapping: HashMap::new(),
+            load_balancing: None,
         };
 
         let endpoint = config.get_default_endpoint();
@@ -318,6 +333,7 @@ mod tests {
             session_timeout_seconds: 300,
             control_packet_magic_bytes: "FFFFFFFF5245534554".to_string(),
             resource_query_mapping: HashMap::new(),
+            load_balancing: None,
         };
 
         let magic_bytes = config.get_magic_bytes().unwrap();

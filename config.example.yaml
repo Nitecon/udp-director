@@ -31,6 +31,18 @@ sessionTimeoutSeconds: 300
 # You can customize this to any unique byte sequence
 controlPacketMagicBytes: "FFFFFFFF5245534554"
 
+# Load balancing configuration (optional)
+# If not specified, defaults to "leastSessions" strategy
+loadBalancing:
+  # Strategy: "leastSessions" or "labelArithmetic"
+  type: "leastSessions"
+  
+  # For labelArithmetic strategy, specify the labels to use:
+  # type: "labelArithmetic"
+  # currentLabel: "currentUsers"  # Label containing current user count
+  # maxLabel: "maxUsers"          # Label containing maximum user count
+  # overlap: 2                    # Overlap allowance for concurrent proxies (default: 0)
+
 # Defines how client queries map to k8s resources
 resourceQueryMapping:
   # Example 1: Agones GameServers (Direct Resource Approach)

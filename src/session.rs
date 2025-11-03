@@ -251,6 +251,9 @@ impl Session {
     }
 }
 
+/// Callback type for session cleanup notifications
+pub type SessionCleanupCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Session manager for tracking active client sessions with multi-port support
 /// Sessions are now tracked by client address only, established via query port
 #[derive(Clone)]
@@ -260,6 +263,8 @@ pub struct SessionManager {
     /// This ensures all connections from the same client use the same session
     sessions: Arc<DashMap<IpAddr, Session>>,
     timeout_seconds: u64,
+    /// Optional callback to notify when sessions are cleaned up
+    cleanup_callback: Option<SessionCleanupCallback>,
 }
 
 impl SessionManager {
@@ -268,6 +273,7 @@ impl SessionManager {
         let manager = Self {
             sessions: Arc::new(DashMap::new()),
             timeout_seconds,
+            cleanup_callback: None,
         };
 
         // Start cleanup task
@@ -277,6 +283,11 @@ impl SessionManager {
         });
 
         manager
+    }
+
+    /// Set a cleanup callback to be notified when sessions are removed
+    pub fn set_cleanup_callback(&mut self, callback: SessionCleanupCallback) {
+        self.cleanup_callback = Some(callback);
     }
 
     /// Get an existing session for a client IP address
@@ -397,6 +408,12 @@ impl SessionManager {
             for key in to_remove {
                 if let Some((_, mut session)) = self.sessions.remove(&key) {
                     debug!("Session timed out: {:?}", key);
+                    
+                    // Notify callback if set
+                    if let Some(callback) = &self.cleanup_callback {
+                        callback(&session.target_ip);
+                    }
+                    
                     session.shutdown_sockets().await;
                     removed_count += 1;
                 }

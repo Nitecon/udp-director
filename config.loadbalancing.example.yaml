@@ -1,0 +1,57 @@
+# Example configuration with advanced load balancing
+# This demonstrates label-based arithmetic load balancing
+
+queryPort: 9000
+dataPort: 7777
+
+defaultEndpoint:
+  resourceType: "gameserver"
+  namespace: "default"
+  labelSelector:
+    agones.dev/fleet: "default-fleet"
+  statusQuery:
+    jsonPath: "status.state"
+    expectedValues:
+      - "Ready"
+      - "Allocated"
+
+tokenTtlSeconds: 30
+sessionTimeoutSeconds: 300
+controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+# Advanced load balancing with label-based arithmetic
+# This strategy routes traffic based on resource labels
+loadBalancing:
+  type: "labelArithmetic"
+  currentLabel: "currentUsers"  # Label on pods/gameservers with current user count
+  maxLabel: "maxUsers"          # Label on pods/gameservers with max user capacity
+  overlap: 2                    # Allow 2 extra connections for concurrent proxy instances
+  
+  # How it works:
+  # - The proxy will only route to backends where: currentUsers + overlap <= maxUsers
+  # - Backends are sorted by available capacity (maxUsers - currentUsers - sessions - overlap)
+  # - This prevents routing to full servers and allows for "friends joining" scenarios
+  # - The overlap accounts for race conditions when multiple proxies route simultaneously
+
+resourceQueryMapping:
+  gameserver:
+    group: "agones.dev"
+    version: "v1"
+    resource: "gameservers"
+    addressPath: "status.address"
+    portName: "default"
+
+# Example GameServer with labels:
+# apiVersion: agones.dev/v1
+# kind: GameServer
+# metadata:
+#   name: game-server-1
+#   labels:
+#     currentUsers: "45"  # Current player count
+#     maxUsers: "50"      # Maximum player capacity
+# status:
+#   state: Ready
+#   address: 10.0.0.1
+#   ports:
+#   - name: default
+#     port: 7777
