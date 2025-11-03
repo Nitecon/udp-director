@@ -35,6 +35,7 @@ impl TokenTarget {
     }
 
     /// Convert to a SocketAddr for a specific proxy port and protocol
+    #[allow(dead_code)]
     pub fn to_socket_addr_for_port(
         &self,
         proxy_port: u16,
@@ -64,6 +65,7 @@ impl TokenTarget {
     }
 
     /// Convert to a SocketAddr (backwards compatibility - uses first available port)
+    #[allow(dead_code)]
     pub fn to_socket_addr(&self) -> Result<SocketAddr, std::io::Error> {
         if let Some(((_proxy_port, _protocol), target_port)) = self.port_mappings.iter().next() {
             format!("{}:{}", self.cluster_ip, target_port)

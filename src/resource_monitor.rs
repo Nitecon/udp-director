@@ -219,7 +219,8 @@ mod tests {
 
         let config = crate::config::Config {
             query_port: 9000,
-            data_port: 7777,
+            data_port: Some(7777),
+            data_ports: None,
             default_endpoint: crate::config::DefaultEndpoint {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),

@@ -474,6 +474,7 @@ impl DataProxy {
     }
 
     /// Extract target address and port from a resource
+    #[allow(dead_code)]
     async fn extract_endpoint_target(
         &self,
         resource: &kube::api::DynamicObject,
@@ -488,7 +489,8 @@ impl DataProxy {
         }
     }
 
-    /// Extract endpoint using direct resource approach
+    /// Extract target using direct resource approach
+    #[allow(dead_code)]
     fn extract_direct_endpoint(
         &self,
         resource: &kube::api::DynamicObject,
@@ -509,6 +511,7 @@ impl DataProxy {
     }
 
     /// Extract endpoint using service-based approach
+    #[allow(dead_code)]
     async fn extract_service_endpoint(
         &self,
         resource: &kube::api::DynamicObject,
