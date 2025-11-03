@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     // Initialize load balancer for session tracking
     let lb_config = config.get_load_balancing();
     let load_balancer = LoadBalancer::new(lb_config.strategy, k8s_client.clone());
-    
+
     // Set up cleanup callback to decrement load balancer counts
     let lb_for_callback = load_balancer.clone();
     session_manager.set_cleanup_callback(std::sync::Arc::new(move |target_ip: &str| {

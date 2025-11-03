@@ -132,23 +132,20 @@ impl LoadBalancer {
                 .clone();
 
             // Extract address
-            let address = match self
-                .k8s_client
-                .extract_address(resource, address_path, address_type)
-            {
-                Ok(addr) => addr,
-                Err(e) => {
-                    warn!("Failed to extract address from resource {}: {}", name, e);
-                    continue;
-                }
-            };
+            let address =
+                match self
+                    .k8s_client
+                    .extract_address(resource, address_path, address_type)
+                {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        warn!("Failed to extract address from resource {}: {}", name, e);
+                        continue;
+                    }
+                };
 
             // Get current session count for this backend
-            let session_count = self
-                .session_counts
-                .get(&address)
-                .map(|v| *v)
-                .unwrap_or(0);
+            let session_count = self.session_counts.get(&address).map(|v| *v).unwrap_or(0);
 
             backends.push((resource.clone(), address, session_count));
         }
@@ -161,11 +158,7 @@ impl LoadBalancer {
         backends.sort_by_key(|(_, _, count)| *count);
         let (selected, address, count) = &backends[0];
 
-        let name = selected
-            .metadata
-            .name
-            .as_deref()
-            .unwrap_or("unknown");
+        let name = selected.metadata.name.as_deref().unwrap_or("unknown");
 
         debug!(
             "Selected backend '{}' ({}) with {} sessions (least of {} backends)",
@@ -199,16 +192,17 @@ impl LoadBalancer {
                 .to_string();
 
             // Extract address
-            let address = match self
-                .k8s_client
-                .extract_address(resource, address_path, address_type)
-            {
-                Ok(addr) => addr,
-                Err(e) => {
-                    warn!("Failed to extract address from resource {}: {}", name, e);
-                    continue;
-                }
-            };
+            let address =
+                match self
+                    .k8s_client
+                    .extract_address(resource, address_path, address_type)
+                {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        warn!("Failed to extract address from resource {}: {}", name, e);
+                        continue;
+                    }
+                };
 
             // Get labels
             let labels = resource
@@ -260,11 +254,7 @@ impl LoadBalancer {
             };
 
             // Get session count for this backend
-            let session_count = self
-                .session_counts
-                .get(&address)
-                .map(|v| *v)
-                .unwrap_or(0) as i64;
+            let session_count = self.session_counts.get(&address).map(|v| *v).unwrap_or(0) as i64;
 
             // Calculate available capacity: max - current - sessions - overlap
             // This ensures: current + sessions + overlap <= max
@@ -303,11 +293,7 @@ impl LoadBalancer {
         });
 
         let (selected, address, available, current) = &candidates[0];
-        let name = selected
-            .metadata
-            .name
-            .as_deref()
-            .unwrap_or("unknown");
+        let name = selected.metadata.name.as_deref().unwrap_or("unknown");
 
         info!(
             "Selected backend '{}' ({}) with {} available capacity (current={}, {} candidates)",
@@ -323,7 +309,10 @@ impl LoadBalancer {
 
     /// Increment session count for a backend
     pub fn increment_session(&self, backend_address: &str) {
-        let mut entry = self.session_counts.entry(backend_address.to_string()).or_insert(0);
+        let mut entry = self
+            .session_counts
+            .entry(backend_address.to_string())
+            .or_insert(0);
         *entry += 1;
         debug!(
             "Incremented session count for backend {}: {}",
@@ -388,7 +377,11 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
 
-    fn create_mock_resource(name: &str, address: &str, labels: HashMap<String, String>) -> DynamicObject {
+    fn create_mock_resource(
+        name: &str,
+        address: &str,
+        labels: HashMap<String, String>,
+    ) -> DynamicObject {
         let mut metadata = kube::api::ObjectMeta::default();
         metadata.name = Some(name.to_string());
         metadata.labels = Some(labels.into_iter().collect());
@@ -427,18 +420,14 @@ mod tests {
         lb.increment_session("10.0.0.2");
 
         // Select backend - should pick pod-3 (0 sessions)
-        let selected = lb
-            .select_backend(&resources, "status.podIP", None)
-            .unwrap();
+        let selected = lb.select_backend(&resources, "status.podIP", None).unwrap();
         assert_eq!(selected.metadata.name.as_ref().unwrap(), "pod-3");
 
         // Add session to pod-3, now pod-2 has least
         lb.increment_session("10.0.0.3");
         lb.increment_session("10.0.0.3");
 
-        let selected = lb
-            .select_backend(&resources, "status.podIP", None)
-            .unwrap();
+        let selected = lb.select_backend(&resources, "status.podIP", None).unwrap();
         assert_eq!(selected.metadata.name.as_ref().unwrap(), "pod-2");
     }
 
@@ -476,9 +465,7 @@ mod tests {
         ];
 
         // Select backend - should pick pod-3 (most available: 10-2-0-2=6)
-        let selected = lb
-            .select_backend(&resources, "status.podIP", None)
-            .unwrap();
+        let selected = lb.select_backend(&resources, "status.podIP", None).unwrap();
         assert_eq!(selected.metadata.name.as_ref().unwrap(), "pod-3");
 
         // Add sessions to pod-3
@@ -488,9 +475,7 @@ mod tests {
         lb.increment_session("10.0.0.3");
 
         // Now pod-1 should be selected (10-5-0-2=3 vs 10-2-4-2=2)
-        let selected = lb
-            .select_backend(&resources, "status.podIP", None)
-            .unwrap();
+        let selected = lb.select_backend(&resources, "status.podIP", None).unwrap();
         assert_eq!(selected.metadata.name.as_ref().unwrap(), "pod-1");
     }
 

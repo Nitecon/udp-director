@@ -69,7 +69,7 @@ impl DataProxy {
         let data_ports = config.get_data_ports();
         let lb_config = config.get_load_balancing();
         let load_balancer = LoadBalancer::new(lb_config.strategy, k8s_client.clone());
-        
+
         Self {
             data_ports,
             token_cache,

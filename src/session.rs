@@ -408,12 +408,12 @@ impl SessionManager {
             for key in to_remove {
                 if let Some((_, mut session)) = self.sessions.remove(&key) {
                     debug!("Session timed out: {:?}", key);
-                    
+
                     // Notify callback if set
                     if let Some(callback) = &self.cleanup_callback {
                         callback(&session.target_ip);
                     }
-                    
+
                     session.shutdown_sockets().await;
                     removed_count += 1;
                 }
