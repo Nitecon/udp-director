@@ -14,7 +14,6 @@ A Kubernetes-native, high-performance stateful UDP/TCP proxy for dynamic routing
 - **[Coding Guidelines](Docs/CodingGuidelines.md)** - Standards for contributors
 - **[Testing Guide](Docs/Testing.md)** - Unit, integration, and load testing
 - **[Quick Reference](Docs/QuickReference.md)** - Commands and API reference
-- **[Docker Registry Setup](Docs/DockerRegistry.md)** - Registry configuration
 - **[Project Summary](Docs/ProjectSummary.md)** - Implementation status
 - **[Changelog](Docs/Changelog.md)** - Version history
 
@@ -61,9 +60,23 @@ UDP Director uses a three-phase flow:
 - Kubernetes cluster with Cilium CNI
 - `kubectl` configured
 
-### Deploy to Kubernetes
+### Docker Images
 
-The latest images are automatically published to Docker Hub at `nitecon/udp-director`.
+Docker images are automatically built and published to Docker Hub via GitHub Actions:
+
+- **Docker Hub**: https://hub.docker.com/r/nitecon/udp-director
+- **Latest**: `nitecon/udp-director:latest` (updated on every push to `main`)
+- **Tagged Releases**: `nitecon/udp-director:v1.0.0` (created when version tags are pushed)
+
+```bash
+# Pull the latest image
+docker pull nitecon/udp-director:latest
+
+# Pull a specific version
+docker pull nitecon/udp-director:v1.0.0
+```
+
+### Deploy to Kubernetes
 
 ```bash
 # Clone repository for K8s manifests
@@ -73,9 +86,10 @@ cd udp-director
 # Deploy
 kubectl apply -f k8s/rbac.yaml
 # Choose the appropriate configmap for your use case:
-kubectl apply -f k8s/configmap-games.yaml  # For game servers (Agones)
-# OR kubectl apply -f k8s/configmap-dns.yaml    # For DNS routing
-# OR kubectl apply -f k8s/configmap-ntp.yaml    # For NTP routing
+kubectl apply -f k8s/configmap-agones-gameserver.yaml  # For Agones GameServers
+# OR kubectl apply -f k8s/configmap-pods.yaml            # For standard Kubernetes pods
+# OR kubectl apply -f k8s/configmap-dns.yaml             # For DNS routing
+# OR kubectl apply -f k8s/configmap-ntp.yaml             # For NTP routing
 kubectl apply -f k8s/deployment.yaml
 
 # Verify
@@ -88,11 +102,11 @@ kubectl logs -n udp-director -l app=udp-director -f
 ```bash
 # Use a specific version tag
 kubectl set image deployment/udp-director \
-  udp-director=nitecon/udp-director:1.0.0 \
+  udp-director=nitecon/udp-director:v1.0.0 \
   -n udp-director
 
 # Or edit deployment.yaml before applying
-# image: nitecon/udp-director:1.0.0
+# image: nitecon/udp-director:v1.0.0
 ```
 
 ### Client Integration Example
@@ -150,7 +164,9 @@ See [Technical Reference](Docs/TECHNICAL_REFERENCE.md) and [Testing Guide](Docs/
 
 Choose the appropriate ConfigMap for your use case:
 
-- **`k8s/configmap-games.yaml`** - For Agones game servers (GameServer and Fleet routing)
+- **`k8s/configmap-agones-gameserver.yaml`** - For Agones GameServers (direct resource inspection)
+- **`k8s/configmap-agones-service.yaml`** - For Agones GameServers (service-based routing)
+- **`k8s/configmap-pods.yaml`** - For standard Kubernetes pods (deployments, statefulsets)
 - **`k8s/configmap-dns.yaml`** - For DNS service routing (port 53)
 - **`k8s/configmap-ntp.yaml`** - For NTP service routing (port 123)
 
@@ -195,14 +211,17 @@ cargo build --release
 make help
 ```
 
-### Docker Images
+### Automated Builds
 
-Images are automatically built and pushed to Docker Hub via GitHub Actions:
+Docker images are automatically built and published via GitHub Actions when:
+- **Push to `main`**: Updates `nitecon/udp-director:latest`
+- **Version tags** (e.g., `v1.0.0`): Creates `nitecon/udp-director:v1.0.0`
 
-- **Latest**: `nitecon/udp-director:latest` (on every push to `main`)
-- **Tagged**: `nitecon/udp-director:1.0.0` (on version tags like `v1.0.0`)
-
-See [Docker Registry Setup](Docs/DockerRegistry.md) for more details.
+To trigger a release:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## Technology Stack
 

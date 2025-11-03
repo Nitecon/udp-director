@@ -1,0 +1,251 @@
+# Example: Complete setup for routing to pods in a standard Kubernetes deployment
+# This example shows how to deploy a game server and configure UDP Director to route to it
+
+---
+# 1. Create the namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: starx
+
+---
+# 2. Deploy the game server application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: starx-test-deployment
+  namespace: starx
+  labels:
+    app: starx-test
+    map: m-tutorial
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: starx-test
+  template:
+    metadata:
+      labels:
+        app: starx-test
+        map: m-tutorial
+    spec:
+      containers:
+        - name: starx
+          image: registry.nitecon.net/starx/starx:latest
+          env:
+            - name: MAP
+              value: "/Game/Levels/M_Tutorial"
+          ports:
+            - name: game-udp
+              containerPort: 7777
+              protocol: UDP
+            - name: game-tcp
+              containerPort: 7777
+              protocol: TCP
+          volumeMounts:
+            - name: mtls-cert
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: mtls-cert
+          secret:
+            secretName: server-mtls-cert
+
+---
+# 3. Optional: Create a LoadBalancer service for external access
+# Note: UDP Director can route directly to pods, bypassing this service
+apiVersion: v1
+kind: Service
+metadata:
+  name: starx-test-service
+  namespace: starx
+  labels:
+    app: starx-test
+spec:
+  type: LoadBalancer
+  selector:
+    app: starx-test
+  ports:
+    - name: game-udp
+      port: 7777
+      targetPort: 7777
+      protocol: UDP
+    - name: game-tcp
+      port: 7777
+      targetPort: 7777
+      protocol: TCP
+
+---
+# 4. Deploy UDP Director with pod-based routing
+# First, apply the RBAC configuration (required for pod access)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: udp-director
+  namespace: starx
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: udp-director-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agones.dev"]
+    resources: ["gameservers"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: udp-director-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: udp-director-role
+subjects:
+  - kind: ServiceAccount
+    name: udp-director
+    namespace: starx
+
+---
+# 5. Apply the pod-based ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udp-director-config
+  namespace: starx
+data:
+  config.yaml: |
+    queryPort: 9000
+    dataPort: 7777
+    tokenTtlSeconds: 30
+    sessionTimeoutSeconds: 300
+    controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+    # Default endpoint targets pods with specific labels
+    defaultEndpoint:
+      resourceType: "starx-pod"
+      namespace: "starx"
+      labelSelector:
+        app: "starx-test"
+        map: "m-tutorial"
+      statusQuery:
+        jsonPath: "status.phase"
+        expectedValues:
+          - "Running"
+
+    resourceQueryMapping:
+      starx-pod:
+        group: ""
+        version: "v1"
+        resource: "pods"
+        addressPath: "status.podIP"
+        portName: "game-udp"
+
+---
+# 6. Deploy UDP Director
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udp-director
+  namespace: starx
+  labels:
+    app: udp-director
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udp-director
+  template:
+    metadata:
+      labels:
+        app: udp-director
+    spec:
+      serviceAccountName: udp-director
+      containers:
+        - name: udp-director
+          image: your-registry/udp-director:latest
+          ports:
+            - name: query
+              containerPort: 9000
+              protocol: TCP
+            - name: data
+              containerPort: 7777
+              protocol: UDP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/udp-director
+              readOnly: true
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+      volumes:
+        - name: config
+          configMap:
+            name: udp-director-config
+
+---
+# 7. Expose UDP Director with a LoadBalancer service
+apiVersion: v1
+kind: Service
+metadata:
+  name: udp-director-service
+  namespace: starx
+spec:
+  type: LoadBalancer
+  selector:
+    app: udp-director
+  ports:
+    - name: query
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: data
+      port: 7777
+      targetPort: 7777
+      protocol: UDP
+
+---
+# Usage Instructions:
+#
+# 1. Deploy everything:
+#    kubectl apply -f example-pod-deployment.yaml
+#
+# 2. Get the UDP Director service external IP:
+#    kubectl get svc udp-director-service -n starx
+#
+# 3. Query for available pods:
+#    # Connect to the query port (9000) and send a JSON query:
+#    echo '{"resourceType":"starx-pod","namespace":"starx","labelSelector":{"app":"starx-test"}}' | nc <EXTERNAL-IP> 9000
+#
+# 4. The response will include a token and the pod's IP:port
+#
+# 5. Use the token to connect to the data port (7777) and start sending UDP traffic
+#
+# Advanced Queries:
+#
+# - Target pods by map label:
+#   {"resourceType":"starx-pod","namespace":"starx","labelSelector":{"map":"m-tutorial"}}
+#
+# - Target TCP port instead of UDP:
+#   {"resourceType":"starx-pod-tcp","namespace":"starx","labelSelector":{"app":"starx-test"}}
+#   (requires adding starx-pod-tcp to resourceQueryMapping with portName: "game-tcp")
+#
+# Monitoring:
+#
+# - Check pod status:
+#   kubectl get pods -n starx -l app=starx-test
+#
+# - View UDP Director logs:
+#   kubectl logs -n starx -l app=udp-director -f
+#
+# - Describe a pod to see its IP and ports:
+#   kubectl describe pod -n starx <pod-name>

@@ -4,7 +4,7 @@ This directory contains Kubernetes manifests for deploying UDP Director.
 
 ## ConfigMap Files
 
-UDP Director provides **four pre-configured ConfigMaps** for different use cases. Choose the one that matches your needs:
+UDP Director provides **five pre-configured ConfigMaps** for different use cases. Choose the one that matches your needs:
 
 ### 🎮 configmap-agones-gameserver.yaml (Recommended)
 **Use for**: Agones game server routing with direct resource inspection
@@ -42,6 +42,35 @@ kubectl apply -f k8s/configmap-agones-gameserver.yaml
 ```bash
 kubectl apply -f k8s/configmap-agones-service.yaml
 ```
+
+---
+
+### 📦 configmap-pods.yaml
+**Use for**: Direct pod routing for standard Kubernetes deployments
+
+**Features**:
+- Routes directly to pod IPs (bypasses services)
+- Supports label-based pod selection
+- Filters by pod phase (Running, Pending, etc.)
+- Extracts ports by name or array index
+- Perfect for game servers, stateful apps, or any pod-based routing
+- Default data port: 7777
+
+**Example query**:
+```json
+{"resourceType": "starx-pod", "namespace": "starx", "labelSelector": {"app": "starx-test", "map": "m-tutorial"}}
+```
+
+**Deploy**:
+```bash
+kubectl apply -f k8s/configmap-pods.yaml
+```
+
+**Key Features**:
+- **Port Name Lookup**: Automatically finds ports by name (e.g., "game-udp", "game-tcp")
+- **Array Indexing**: Supports JSONPath with array syntax like `spec.containers[0].ports[0].containerPort`
+- **Multi-Container Support**: Can target specific containers in multi-container pods
+- **Status Filtering**: Only routes to pods in "Running" state
 
 ---
 
@@ -143,6 +172,9 @@ kubectl label namespace starx \
    
    # OR for Agones with service-based lookup
    kubectl apply -f k8s/configmap-agones-service.yaml -n <your-namespace>
+   
+   # OR for direct pod routing (standard Kubernetes deployments)
+   kubectl apply -f k8s/configmap-pods.yaml -n <your-namespace>
    
    # OR for DNS routing
    kubectl apply -f k8s/configmap-dns.yaml -n <your-namespace>

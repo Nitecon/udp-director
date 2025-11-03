@@ -124,13 +124,30 @@ impl K8sClient {
     }
 
     /// Extract a value from JSON using a simple JSONPath-like syntax
-    /// Supports paths like "status.state" or "metadata.name"
+    /// Supports paths like "status.state", "metadata.name", or "spec.containers[0].ports[1].containerPort"
     fn extract_json_path(&self, json: &Value, path: &str) -> Option<Value> {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = json;
 
         for part in parts {
-            current = current.get(part)?;
+            // Check if this part contains array indexing like "containers[0]"
+            if let Some(bracket_pos) = part.find('[') {
+                let field_name = &part[..bracket_pos];
+                let index_str = &part[bracket_pos + 1..part.len() - 1]; // Extract index between [ and ]
+                
+                // Get the field (which should be an array)
+                current = current.get(field_name)?;
+                
+                // Parse the index and get the array element
+                if let Ok(index) = index_str.parse::<usize>() {
+                    current = current.get(index)?;
+                } else {
+                    return None;
+                }
+            } else {
+                // Simple field access
+                current = current.get(part)?;
+            }
         }
 
         Some(current.clone())
@@ -198,14 +215,16 @@ impl K8sClient {
         let resource_json =
             serde_json::to_value(resource).context("Failed to serialize resource to JSON")?;
 
-        // If port_name is provided, look it up in status.ports array
+        // If port_name is provided, look it up in status.ports array or spec.containers[].ports array
         if let Some(name) = port_name {
+            // First try status.ports (for resources like GameServers)
             if let Some(Value::Object(status)) = resource_json.get("status") {
                 if let Some(Value::Array(ports)) = status.get("ports") {
                     for port in ports {
                         if let Some(Value::String(port_name_val)) = port.get("name") {
                             if port_name_val == name {
                                 if let Some(Value::Number(port_num)) = port.get("port") {
+                                    debug!("Found port '{}' in status.ports: {}", name, port_num);
                                     return port_num
                                         .as_u64()
                                         .and_then(|n| u16::try_from(n).ok())
@@ -216,6 +235,30 @@ impl K8sClient {
                     }
                 }
             }
+
+            // If not found in status, try spec.containers[].ports[] (for Pods)
+            if let Some(Value::Object(spec)) = resource_json.get("spec") {
+                if let Some(Value::Array(containers)) = spec.get("containers") {
+                    for container in containers {
+                        if let Some(Value::Array(ports)) = container.get("ports") {
+                            for port in ports {
+                                if let Some(Value::String(port_name_val)) = port.get("name") {
+                                    if port_name_val == name {
+                                        if let Some(Value::Number(port_num)) = port.get("containerPort") {
+                                            debug!("Found port '{}' in spec.containers[].ports: {}", name, port_num);
+                                            return port_num
+                                                .as_u64()
+                                                .and_then(|n| u16::try_from(n).ok())
+                                                .context("Port number out of range");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             anyhow::bail!("Port with name '{}' not found in resource", name);
         }
 
@@ -337,5 +380,124 @@ mod tests {
 
         let value = client.extract_json_path(&json, "nonexistent.path");
         assert_eq!(value, None);
+    }
+
+    #[tokio::test]
+    async fn test_extract_json_path_with_arrays() {
+        // Create a mock client for testing
+        let client = match K8sClient::new().await {
+            Ok(c) => c,
+            Err(_) => {
+                // Skip test if not in a k8s environment
+                return;
+            }
+        };
+
+        // Test with pod-like structure
+        let json = json!({
+            "spec": {
+                "containers": [
+                    {
+                        "name": "starx",
+                        "ports": [
+                            {
+                                "name": "game-udp",
+                                "containerPort": 7777,
+                                "protocol": "UDP"
+                            },
+                            {
+                                "name": "game-tcp",
+                                "containerPort": 7777,
+                                "protocol": "TCP"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "status": {
+                "podIP": "10.244.1.44"
+            }
+        });
+
+        // Test array indexing
+        let value = client.extract_json_path(&json, "spec.containers[0].name");
+        assert_eq!(value, Some(Value::String("starx".to_string())));
+
+        let value = client.extract_json_path(&json, "spec.containers[0].ports[0].containerPort");
+        assert_eq!(value, Some(Value::Number(7777.into())));
+
+        let value = client.extract_json_path(&json, "spec.containers[0].ports[1].protocol");
+        assert_eq!(value, Some(Value::String("TCP".to_string())));
+
+        let value = client.extract_json_path(&json, "status.podIP");
+        assert_eq!(value, Some(Value::String("10.244.1.44".to_string())));
+
+        // Test invalid array index
+        let value = client.extract_json_path(&json, "spec.containers[5].name");
+        assert_eq!(value, None);
+    }
+
+    #[tokio::test]
+    async fn test_extract_port_from_pod_spec() {
+        // Create a mock client for testing
+        let client = match K8sClient::new().await {
+            Ok(c) => c,
+            Err(_) => {
+                // Skip test if not in a k8s environment
+                return;
+            }
+        };
+
+        // Create a mock pod resource
+        let pod_json = json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "test-pod"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "name": "starx",
+                        "ports": [
+                            {
+                                "name": "game-udp",
+                                "containerPort": 7777,
+                                "protocol": "UDP"
+                            },
+                            {
+                                "name": "game-tcp",
+                                "containerPort": 7777,
+                                "protocol": "TCP"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "status": {
+                "podIP": "10.244.1.44",
+                "phase": "Running"
+            }
+        });
+
+        let pod: DynamicObject = serde_json::from_value(pod_json).unwrap();
+
+        // Test port extraction by name
+        let port = client.extract_port(&pod, None, Some("game-udp")).unwrap();
+        assert_eq!(port, 7777);
+
+        let port = client.extract_port(&pod, None, Some("game-tcp")).unwrap();
+        assert_eq!(port, 7777);
+
+        // Test port extraction by path
+        let port = client.extract_port(&pod, Some("spec.containers[0].ports[0].containerPort"), None).unwrap();
+        assert_eq!(port, 7777);
+
+        let port = client.extract_port(&pod, Some("spec.containers[0].ports[1].containerPort"), None).unwrap();
+        assert_eq!(port, 7777);
+
+        // Test non-existent port name
+        let result = client.extract_port(&pod, None, Some("non-existent"));
+        assert!(result.is_err());
     }
 }
