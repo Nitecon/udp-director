@@ -27,12 +27,21 @@ pub struct StatusQueryDto {
     pub expected_values: Vec<String>,
 }
 
-/// Query response to client
+/// Query response to client (single port - backwards compatibility)
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum QueryResponse {
-    Success { token: String },
-    Error { error: String },
+    Success {
+        token: String,
+    },
+    SuccessMultiPort {
+        token: String,
+        address: String,
+        ports: HashMap<String, u16>,
+    },
+    Error {
+        error: String,
+    },
 }
 
 /// TCP Query Server (Phase 1)
@@ -156,24 +165,70 @@ impl QueryServer {
 
         debug!("Selected resource: {}", resource_name);
 
-        let (cluster_ip, port) = match self
-            .extract_target_info(
-                selected_resource,
-                mapping,
-                &request.namespace,
-                &resource_name,
-            )
-            .await
-        {
-            Ok(info) => info,
-            Err(e) => return e,
-        };
+        // Check if multi-port configuration is available
+        if mapping.ports.is_some() {
+            // Multi-port approach
+            let (cluster_ip, ports_map) = match self
+                .extract_multi_port_target_info(
+                    selected_resource,
+                    mapping,
+                    &request.namespace,
+                    &resource_name,
+                )
+                .await
+            {
+                Ok(info) => info,
+                Err(e) => return e,
+            };
 
-        let target = TokenTarget { cluster_ip, port };
-        let token = self.token_cache.generate_token(target).await;
+            // Build port mappings for TokenTarget
+            let data_ports = self.config.get_data_ports();
+            let mut token_port_mappings = HashMap::new();
 
-        info!("Generated token for resource: {}", resource_name);
-        QueryResponse::Success { token }
+            for data_port_config in &data_ports {
+                if let Some(target_port) = ports_map.get(&data_port_config.name) {
+                    token_port_mappings.insert(
+                        (data_port_config.port, data_port_config.protocol),
+                        *target_port,
+                    );
+                }
+            }
+
+            let target = TokenTarget::multi_port(cluster_ip.clone(), token_port_mappings);
+            let token = self.token_cache.generate_token(target).await;
+
+            info!(
+                "Generated multi-port token for resource: {} ({} ports)",
+                resource_name,
+                ports_map.len()
+            );
+
+            QueryResponse::SuccessMultiPort {
+                token,
+                address: cluster_ip,
+                ports: ports_map,
+            }
+        } else {
+            // Single port approach (backwards compatibility)
+            let (cluster_ip, port) = match self
+                .extract_target_info(
+                    selected_resource,
+                    mapping,
+                    &request.namespace,
+                    &resource_name,
+                )
+                .await
+            {
+                Ok(info) => info,
+                Err(e) => return e,
+            };
+
+            let target = TokenTarget::single_port(cluster_ip, port);
+            let token = self.token_cache.generate_token(target).await;
+
+            info!("Generated token for resource: {}", resource_name);
+            QueryResponse::Success { token }
+        }
     }
 
     /// Query Kubernetes for matching resources
@@ -291,6 +346,45 @@ impl QueryServer {
             .ok_or_else(|| QueryResponse::Error {
                 error: format!("No service found for resource: {}", resource_name),
             })
+    }
+
+    /// Extract multi-port target information from resource
+    async fn extract_multi_port_target_info(
+        &self,
+        resource: &kube::api::DynamicObject,
+        mapping: &crate::config::ResourceMapping,
+        _namespace: &str,
+        _resource_name: &str,
+    ) -> Result<(String, HashMap<String, u16>), QueryResponse> {
+        let address_path = mapping
+            .address_path
+            .as_ref()
+            .ok_or_else(|| QueryResponse::Error {
+                error: "address_path is required for multi-port approach".to_string(),
+            })?;
+
+        let port_mappings = mapping.ports.as_ref().ok_or_else(|| QueryResponse::Error {
+            error: "ports configuration is required for multi-port approach".to_string(),
+        })?;
+
+        debug!("Using direct multi-port resource approach");
+
+        let address = self
+            .k8s_client
+            .extract_address(resource, address_path, mapping.address_type.as_deref())
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to extract address: {}", e),
+            })?;
+
+        let ports = self
+            .k8s_client
+            .extract_ports(resource, port_mappings)
+            .map_err(|e| QueryResponse::Error {
+                error: format!("Failed to extract ports: {}", e),
+            })?;
+
+        debug!("Extracted address: {}, ports: {:?}", address, ports);
+        Ok((address, ports))
     }
 }
 

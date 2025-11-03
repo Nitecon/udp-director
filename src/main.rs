@@ -75,10 +75,9 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Start Data Proxy (Phase 2 & 3)
+    // Start Multi-Port Data Proxy (Phase 2 & 3)
     let proxy_handle = {
         let data_proxy = DataProxy::new(
-            config.data_port,
             token_cache.clone(),
             session_manager.clone(),
             config.clone(),
@@ -119,7 +118,17 @@ async fn main() -> Result<()> {
 
     info!("UDP Director is running");
     info!("Query port: {}", config.query_port);
-    info!("Data port: {}", config.data_port);
+
+    // Log all configured data ports
+    let data_ports = config.get_data_ports();
+    info!("Data ports configured: {}", data_ports.len());
+    for port_config in &data_ports {
+        info!(
+            "  - {} port {} ({})",
+            port_config.protocol, port_config.port, port_config.name
+        );
+    }
+
     info!("Metrics port: 9090");
 
     // Wait for shutdown signal or task termination
@@ -242,6 +251,7 @@ fn handle_query_success(
         let resource_name = resource.metadata.name.as_deref().unwrap_or("unknown");
         info!("  Selected Resource: {}", resource_name);
 
+        // Extract and log the target address and port(s)
         if let Some(address_path) = &mapping.address_path {
             extract_and_log_target(resource, k8s_client, mapping, address_path);
         }
@@ -259,16 +269,33 @@ fn extract_and_log_target(
 
     match k8s_client.extract_address(resource, address_path, mapping.address_type.as_deref()) {
         Ok(address) => {
-            match k8s_client.extract_port(
-                resource,
-                mapping.port_path.as_deref(),
-                mapping.port_name.as_deref(),
-            ) {
-                Ok(port) => {
-                    info!("  Default Target: {}:{}", address, port);
+            // Check if multi-port configuration exists
+            if let Some(port_mappings) = &mapping.ports {
+                // Multi-port approach
+                match k8s_client.extract_ports(resource, port_mappings) {
+                    Ok(ports) => {
+                        info!("  Default Target: {} ({} ports)", address, ports.len());
+                        for (name, port) in &ports {
+                            info!("    - {}: {}", name, port);
+                        }
+                    }
+                    Err(e) => {
+                        error!("  ✗ Failed to extract ports: {}", e);
+                    }
                 }
-                Err(e) => {
-                    error!("  ✗ Failed to extract port: {}", e);
+            } else {
+                // Single port approach (backwards compatibility)
+                match k8s_client.extract_port(
+                    resource,
+                    mapping.port_path.as_deref(),
+                    mapping.port_name.as_deref(),
+                ) {
+                    Ok(port) => {
+                        info!("  Default Target: {}:{}", address, port);
+                    }
+                    Err(e) => {
+                        error!("  ✗ Failed to extract port: {}", e);
+                    }
                 }
             }
         }

@@ -8,6 +8,11 @@ kind: ClusterRole
 metadata:
   name: udp-director
 rules:
+  # Access to Pods (required for direct pod routing)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  
   # Access to Services
   - apiGroups: [""]
     resources: ["services"]
@@ -18,14 +23,9 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
   
-  # Access to Agones GameServers (example CRD)
+  # Access to Agones GameServers (if using Agones)
   - apiGroups: ["agones.dev"]
     resources: ["gameservers"]
-    verbs: ["get", "list", "watch"]
-  
-  # Access to custom resources (example)
-  - apiGroups: ["apps.example.com"]
-    resources: ["customdeployments"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

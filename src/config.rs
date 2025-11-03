@@ -1,6 +1,33 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
+
+/// Protocol type for data ports
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    Udp,
+    Tcp,
+}
+
+impl fmt::Display for Protocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Protocol::Udp => write!(f, "udp"),
+            Protocol::Tcp => write!(f, "tcp"),
+        }
+    }
+}
+
+/// Configuration for a single data port
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataPortConfig {
+    pub port: u16,
+    pub protocol: Protocol,
+    pub name: String,
+}
 
 /// Main configuration structure for the UDP Director
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,8 +36,13 @@ pub struct Config {
     /// Port for the Phase 1 TCP Query Server
     pub query_port: u16,
 
-    /// Port for the Phase 2 TCP/UDP Data Proxy
-    pub data_port: u16,
+    /// Port for the Phase 2 TCP/UDP Data Proxy (deprecated, use data_ports)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_port: Option<u16>,
+
+    /// Multiple data ports configuration (new approach)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_ports: Option<Vec<DataPortConfig>>,
 
     /// Default endpoint query to use if no token is provided
     pub default_endpoint: DefaultEndpoint,
@@ -58,6 +90,17 @@ pub struct StatusQueryConfig {
     pub expected_values: Vec<String>,
 }
 
+/// Port mapping configuration for multi-port support
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortMapping {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_path: Option<String>,
+}
+
 /// Configuration for mapping a resource type to Kubernetes resources
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,13 +136,17 @@ pub struct ResourceMapping {
     pub address_type: Option<String>,
 
     /// JSONPath to extract the port from the resource (e.g., "status.ports[0].port")
-    /// OR simple port name to look up (e.g., "default")
+    /// OR simple port name to look up (e.g., "default") - DEPRECATED for multi-port, use ports instead
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port_path: Option<String>,
 
-    /// Simple port name lookup (alternative to portPath)
+    /// Simple port name lookup (alternative to portPath) - DEPRECATED for multi-port, use ports instead
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port_name: Option<String>,
+
+    /// Multiple port mappings (new multi-port approach)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<Vec<PortMapping>>,
 }
 
 impl Config {
@@ -123,14 +170,48 @@ impl Config {
         Ok(config)
     }
 
+    /// Get the data ports configuration (handles backwards compatibility)
+    pub fn get_data_ports(&self) -> Vec<DataPortConfig> {
+        if let Some(ports) = &self.data_ports {
+            ports.clone()
+        } else if let Some(port) = self.data_port {
+            // Backwards compatibility: convert single data_port to data_ports
+            vec![DataPortConfig {
+                port,
+                protocol: Protocol::Udp,
+                name: "default".to_string(),
+            }]
+        } else {
+            // Default fallback
+            vec![DataPortConfig {
+                port: 7777,
+                protocol: Protocol::Udp,
+                name: "default".to_string(),
+            }]
+        }
+    }
+
     /// Validate the configuration
     fn validate(&self) -> Result<()> {
         if self.query_port == 0 {
             anyhow::bail!("query_port must be non-zero");
         }
-        if self.data_port == 0 {
-            anyhow::bail!("data_port must be non-zero");
+
+        // Validate data port configuration
+        let data_ports = self.get_data_ports();
+        if data_ports.is_empty() {
+            anyhow::bail!("At least one data port must be configured");
         }
+
+        for port_config in &data_ports {
+            if port_config.port == 0 {
+                anyhow::bail!("data_port '{}' must be non-zero", port_config.name);
+            }
+            if port_config.name.is_empty() {
+                anyhow::bail!("data_port name must not be empty");
+            }
+        }
+
         if self.default_endpoint.resource_type.is_empty() {
             anyhow::bail!("default_endpoint.resource_type must not be empty");
         }
@@ -171,7 +252,8 @@ mod tests {
 
         let config = Config {
             query_port: 9000,
-            data_port: 7777,
+            data_port: Some(7777),
+            data_ports: None,
             default_endpoint: DefaultEndpoint {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),
@@ -199,7 +281,8 @@ mod tests {
 
         let config = Config {
             query_port: 9000,
-            data_port: 7777,
+            data_port: Some(7777),
+            data_ports: None,
             default_endpoint: DefaultEndpoint {
                 resource_type: "gameserver".to_string(),
                 namespace: "starx".to_string(),
@@ -222,7 +305,8 @@ mod tests {
     fn test_magic_bytes_decode() {
         let config = Config {
             query_port: 9000,
-            data_port: 7777,
+            data_port: Some(7777),
+            data_ports: None,
             default_endpoint: DefaultEndpoint {
                 resource_type: "gameserver".to_string(),
                 namespace: "default".to_string(),

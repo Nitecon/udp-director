@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::config::ResourceMapping;
+use crate::config::{PortMapping, ResourceMapping};
 
 /// Kubernetes client wrapper
 #[derive(Clone)]
@@ -283,6 +283,27 @@ impl K8sClient {
         } else {
             anyhow::bail!("Either port_path or port_name must be provided");
         }
+    }
+
+    /// Extract multiple ports from a resource based on port mappings
+    pub fn extract_ports(
+        &self,
+        resource: &DynamicObject,
+        port_mappings: &[PortMapping],
+    ) -> Result<HashMap<String, u16>> {
+        let mut ports = HashMap::new();
+
+        for mapping in port_mappings {
+            let port = self.extract_port(
+                resource,
+                mapping.port_path.as_deref(),
+                mapping.port_name.as_deref(),
+            )?;
+            ports.insert(mapping.name.clone(), port);
+            debug!("Extracted port '{}': {}", mapping.name, port);
+        }
+
+        Ok(ports)
     }
 
     /// Find a service for a given resource

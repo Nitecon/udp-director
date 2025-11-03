@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udp-director-config
+  namespace: starx
+data:
+  config.yaml: |
+    # UDP Director Configuration - Multi-Port Pod Routing
+    # This example demonstrates Approach 2: Port Mapping in Token
+    # A single token provides access to multiple ports
+    
+    queryPort: 9000
+    tokenTtlSeconds: 30
+    sessionTimeoutSeconds: 300
+    controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+    # Multi-port configuration
+    dataPorts:
+      - port: 7777
+        protocol: "udp"
+        name: "game-udp"
+      - port: 7777
+        protocol: "tcp"
+        name: "game-tcp"
+      - port: 27015
+        protocol: "udp"
+        name: "query"
+
+    # Default endpoint - targets pods with specific labels
+    defaultEndpoint:
+      resourceType: "starx-pod"
+      namespace: "starx"
+      labelSelector:
+        app: "starx-test"
+        map: "m-tutorial"
+      statusQuery:
+        jsonPath: "status.phase"
+        expectedValues:
+          - "Running"
+
+    # Resource query mapping with multi-port support
+    resourceQueryMapping:
+      starx-pod:
+        group: ""
+        version: "v1"
+        resource: "pods"
+        addressPath: "status.podIP"
+        # Multi-port mapping - maps each proxy port to a container port
+        ports:
+          - name: "game-udp"
+            portName: "game-udp"
+          - name: "game-tcp"
+            portName: "game-tcp"
+          - name: "query"
+            portName: "query"

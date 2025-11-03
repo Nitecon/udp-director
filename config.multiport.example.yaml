@@ -1,0 +1,68 @@
+# UDP Director Multi-Port Configuration Example
+# This configuration demonstrates Approach 2: Port Mapping in Token
+# A single token supports multiple ports with intelligent routing
+
+queryPort: 9000
+tokenTtlSeconds: 30
+sessionTimeoutSeconds: 300
+controlPacketMagicBytes: "FFFFFFFF5245534554"
+
+# Multi-port configuration - define all ports the proxy should listen on
+dataPorts:
+  - port: 7777
+    protocol: "udp"
+    name: "game-udp"
+  - port: 7777
+    protocol: "tcp"
+    name: "game-tcp"
+  - port: 27015
+    protocol: "udp"
+    name: "query"
+  - port: 27016
+    protocol: "udp"
+    name: "rcon"
+
+# Default endpoint configuration
+defaultEndpoint:
+  resourceType: "game-pod"
+  namespace: "game-servers"
+  labelSelector:
+    app: "game-server"
+  statusQuery:
+    jsonPath: "status.phase"
+    expectedValues:
+      - "Running"
+
+# Resource query mapping with multi-port support
+resourceQueryMapping:
+  game-pod:
+    group: ""
+    version: "v1"
+    resource: "pods"
+    addressPath: "status.podIP"
+    # Multi-port configuration: map each data port to a container port
+    ports:
+      - name: "game-udp"
+        portName: "game-udp"
+      - name: "game-tcp"
+        portName: "game-tcp"
+      - name: "query"
+        portName: "query"
+      - name: "rcon"
+        portName: "rcon"
+
+# Example for Agones GameServer
+  gameserver:
+    group: "agones.dev"
+    version: "v1"
+    resource: "gameservers"
+    addressPath: "status.address"
+    ports:
+      - name: "game-udp"
+        portName: "default"
+      - name: "game-tcp"
+        portName: "default"
+      - name: "query"
+        portName: "query"
+      - name: "rcon"
+        portName: "rcon"

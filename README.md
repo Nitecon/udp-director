@@ -86,10 +86,9 @@ cd udp-director
 # Deploy
 kubectl apply -f k8s/rbac.yaml
 # Choose the appropriate configmap for your use case:
-kubectl apply -f k8s/configmap-agones-gameserver.yaml  # For Agones GameServers
-# OR kubectl apply -f k8s/configmap-pods.yaml            # For standard Kubernetes pods
-# OR kubectl apply -f k8s/configmap-dns.yaml             # For DNS routing
-# OR kubectl apply -f k8s/configmap-ntp.yaml             # For NTP routing
+kubectl apply -f k8s/configmap-pods-multiport.yaml     # For multi-port pod routing (recommended)
+# OR kubectl apply -f k8s/configmap-pods.yaml            # For single-port pod routing
+# OR kubectl apply -f k8s/configmap-agones-gameserver.yaml  # For Agones GameServers
 kubectl apply -f k8s/deployment.yaml
 
 # Verify
@@ -164,16 +163,18 @@ See [Technical Reference](Docs/TECHNICAL_REFERENCE.md) and [Testing Guide](Docs/
 
 Choose the appropriate ConfigMap for your use case:
 
+- **`k8s/configmap-pods-multiport.yaml`** - Multi-port pod routing (recommended) - Single token for multiple ports
+- **`k8s/configmap-pods.yaml`** - Single-port pod routing - For standard Kubernetes pods
 - **`k8s/configmap-agones-gameserver.yaml`** - For Agones GameServers (direct resource inspection)
-- **`k8s/configmap-agones-service.yaml`** - For Agones GameServers (service-based routing)
-- **`k8s/configmap-pods.yaml`** - For standard Kubernetes pods (deployments, statefulsets)
-- **`k8s/configmap-dns.yaml`** - For DNS service routing (port 53)
-- **`k8s/configmap-ntp.yaml`** - For NTP service routing (port 123)
+- **`k8s/configmap-agones-service.yaml`** - For Agones GameServers (service-based routing, legacy)
 
 Each ConfigMap includes:
 ```yaml
 queryPort: 9000                    # TCP query endpoint
-dataPort: 7777                     # UDP data proxy (varies by use case)
+dataPorts:                         # Multiple data ports (multi-port config)
+  - port: 7777
+    protocol: "udp"
+    name: "game-udp"
 tokenTTLSeconds: 30                # Token validity
 sessionTimeoutSeconds: 300         # Session timeout
 controlPacketMagicBytes: "FFFFFFFF5245534554"  # Control packet ID
@@ -181,6 +182,8 @@ controlPacketMagicBytes: "FFFFFFFF5245534554"  # Control packet ID
 resourceQueryMapping:
   # Resource-specific mappings (see individual files)
 ```
+
+See [Multi-Port Support](Docs/MultiPortSupport.md) for details on multi-port configuration.
 
 Edit the chosen ConfigMap to customize for your environment.
 

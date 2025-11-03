@@ -1,24 +1,70 @@
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, info};
 
-/// Session information for a client connection
+use crate::config::Protocol;
+
+/// Session information for a client connection with multi-port support
 #[derive(Debug, Clone)]
 pub struct Session {
-    pub target_addr: SocketAddr,
+    pub target_ip: String,
+    /// Port mappings: (proxy_port, protocol) -> target_port
+    pub port_mappings: HashMap<(u16, Protocol), u16>,
     pub last_activity: Instant,
 }
 
 impl Session {
-    /// Create a new session
+    /// Create a new session with a single port (backwards compatibility)
     pub fn new(target_addr: SocketAddr) -> Self {
+        let mut port_mappings = HashMap::new();
+        port_mappings.insert((target_addr.port(), Protocol::Udp), target_addr.port());
         Self {
-            target_addr,
+            target_ip: target_addr.ip().to_string(),
+            port_mappings,
             last_activity: Instant::now(),
         }
+    }
+
+    /// Create a new multi-port session
+    pub fn new_multi_port(target_ip: String, port_mappings: HashMap<(u16, Protocol), u16>) -> Self {
+        Self {
+            target_ip,
+            port_mappings,
+            last_activity: Instant::now(),
+        }
+    }
+
+    /// Get target address for a specific proxy port and protocol
+    pub fn get_target_addr(
+        &self,
+        proxy_port: u16,
+        protocol: Protocol,
+    ) -> Result<SocketAddr, std::io::Error> {
+        let target_port = self
+            .port_mappings
+            .get(&(proxy_port, protocol))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "No port mapping found for proxy port {} ({})",
+                        proxy_port, protocol
+                    ),
+                )
+            })?;
+
+        format!("{}:{}", self.target_ip, target_port)
+            .parse()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid socket address: {}", e),
+                )
+            })
     }
 
     /// Update the last activity timestamp
@@ -32,11 +78,11 @@ impl Session {
     }
 }
 
-/// Session manager for tracking active client sessions
+/// Session manager for tracking active client sessions with multi-port support
 #[derive(Clone)]
 pub struct SessionManager {
-    sessions: Arc<DashMap<SocketAddr, Session>>,
-    #[allow(dead_code)]
+    /// Key: (client_addr, proxy_port, protocol) -> Session
+    sessions: Arc<DashMap<(SocketAddr, u16, Protocol), Session>>,
     timeout_seconds: u64,
 }
 
@@ -57,27 +103,54 @@ impl SessionManager {
         manager
     }
 
-    /// Get an existing session
-    pub fn get(&self, client_addr: &SocketAddr) -> Option<Session> {
-        self.sessions.get(client_addr).map(|entry| entry.clone())
+    /// Get an existing session for a specific port and protocol
+    pub fn get(
+        &self,
+        client_addr: &SocketAddr,
+        proxy_port: u16,
+        protocol: Protocol,
+    ) -> Option<Session> {
+        self.sessions
+            .get(&(*client_addr, proxy_port, protocol))
+            .map(|entry| entry.clone())
     }
 
-    /// Update or create a session (for session reset)
+    /// Update or create a session (for session reset) - single port version
     pub fn upsert(&self, client_addr: SocketAddr, target_addr: SocketAddr) {
-        self.sessions
-            .entry(client_addr)
-            .and_modify(|session| {
-                session.target_addr = target_addr;
-                session.touch();
-            })
-            .or_insert_with(|| Session::new(target_addr));
-
+        let session = Session::new(target_addr);
+        self.sessions.insert(
+            (client_addr, target_addr.port(), Protocol::Udp),
+            session.clone(),
+        );
         debug!("Session upserted: {} -> {}", client_addr, target_addr);
     }
 
+    /// Update or create a multi-port session
+    pub fn upsert_multi_port(
+        &self,
+        client_addr: SocketAddr,
+        target_ip: String,
+        port_mappings: HashMap<(u16, Protocol), u16>,
+    ) {
+        let session = Session::new_multi_port(target_ip.clone(), port_mappings.clone());
+
+        // Insert session for all port mappings
+        for (proxy_port, protocol) in port_mappings.keys() {
+            self.sessions
+                .insert((client_addr, *proxy_port, *protocol), session.clone());
+        }
+
+        debug!(
+            "Multi-port session upserted: {} -> {} ({} ports)",
+            client_addr,
+            target_ip,
+            port_mappings.len()
+        );
+    }
+
     /// Touch a session to update its last activity
-    pub fn touch(&self, client_addr: &SocketAddr) {
-        if let Some(mut entry) = self.sessions.get_mut(client_addr) {
+    pub fn touch(&self, client_addr: &SocketAddr, proxy_port: u16, protocol: Protocol) {
+        if let Some(mut entry) = self.sessions.get_mut(&(*client_addr, proxy_port, protocol)) {
             entry.touch();
         }
     }
@@ -104,9 +177,9 @@ impl SessionManager {
             cleanup_interval.tick().await;
 
             let mut removed_count = 0;
-            self.sessions.retain(|client_addr, session| {
+            self.sessions.retain(|key, session| {
                 if session.is_timed_out(self.timeout_seconds) {
-                    debug!("Session timed out: {}", client_addr);
+                    debug!("Session timed out: {:?}", key);
                     removed_count += 1;
                     false
                 } else {
@@ -136,8 +209,8 @@ mod tests {
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr);
-        let session = manager.get(&client_addr).unwrap();
-        assert_eq!(session.target_addr, target_addr);
+        let session = manager.get(&client_addr, 7777, Protocol::Udp).unwrap();
+        assert_eq!(session.target_ip, "10.0.0.1");
         assert_eq!(manager.count(), 1);
     }
 
@@ -149,12 +222,12 @@ mod tests {
         let target_addr2: SocketAddr = "10.0.0.2:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr1);
-        let session = manager.get(&client_addr).unwrap();
-        assert_eq!(session.target_addr, target_addr1);
+        let session = manager.get(&client_addr, 7777, Protocol::Udp).unwrap();
+        assert_eq!(session.target_ip, "10.0.0.1");
 
         manager.upsert(client_addr, target_addr2);
-        let session = manager.get(&client_addr).unwrap();
-        assert_eq!(session.target_addr, target_addr2);
+        let session = manager.get(&client_addr, 7777, Protocol::Udp).unwrap();
+        assert_eq!(session.target_ip, "10.0.0.2");
         assert_eq!(manager.count(), 1);
     }
 
@@ -165,11 +238,11 @@ mod tests {
         let target_addr: SocketAddr = "10.0.0.1:7777".parse().unwrap();
 
         manager.upsert(client_addr, target_addr);
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get(&client_addr, 7777, Protocol::Udp).unwrap();
         assert!(!session.is_timed_out(1));
 
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let session = manager.get(&client_addr).unwrap();
+        let session = manager.get(&client_addr, 7777, Protocol::Udp).unwrap();
         assert!(session.is_timed_out(1));
     }
 }

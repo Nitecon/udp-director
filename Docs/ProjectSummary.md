@@ -70,9 +70,10 @@ This document provides a comprehensive overview of the UDP Director implementati
   - Support for custom resources
 
 - [x] **ConfigMaps** (`k8s/configmap-*.yaml`)
-  - `configmap-games.yaml` - Agones GameServer and Fleet routing
-  - `configmap-dns.yaml` - DNS service routing (port 53)
-  - `configmap-ntp.yaml` - NTP service routing (port 123)
+  - `configmap-pods-multiport.yaml` - Multi-port pod routing (recommended)
+  - `configmap-pods.yaml` - Single-port pod routing
+  - `configmap-agones-gameserver.yaml` - Agones GameServer routing
+  - `configmap-agones-service.yaml` - Service-based routing (legacy)
   - Each with complete, focused configuration examples
 
 - [x] **Deployment** (`k8s/deployment.yaml`)
